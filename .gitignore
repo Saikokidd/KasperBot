@@ -1,0 +1,31 @@
+# Виртуальное окружение
+venv/
+env/
+.venv/
+
+# Python кэш
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Секретные данные
+.env
+config.ini
+*.key
+*.pem
+token.txt
+config.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Логи
+*.log
+logs/
+
+# База данных
+*.db
+*.sqlite
