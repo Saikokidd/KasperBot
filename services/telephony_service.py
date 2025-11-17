@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from config.settings import settings
 from config.constants import TEL_CODES_REVERSE, MESSAGES
 from keyboards.inline import get_support_keyboard
+from database.models import db
 from utils.logger import logger
 from utils.state import is_tel_choice_expired, clear_tel_choice, get_tel_choice
 
@@ -25,6 +26,13 @@ class TelephonyService:
         Returns:
             ID группы или None
         """
+        # Сначала проверяем в БД
+        telephonies = db.get_all_telephonies()
+        for tel in telephonies:
+            if tel['name'] == tel_name:
+                return tel['group_id']
+        
+        # Если нет в БД, проверяем старые из settings
         telephony_groups = settings.get_telephony_groups()
         return telephony_groups.get(tel_name)
     
@@ -39,6 +47,12 @@ class TelephonyService:
         Returns:
             Название телефонии или "Unknown"
         """
+        # Проверяем в БД
+        tel = db.get_telephony_by_code(tel_code)
+        if tel:
+            return tel['name']
+        
+        # Если нет в БД, проверяем старые
         return TEL_CODES_REVERSE.get(tel_code, "Unknown")
     
     @staticmethod
@@ -71,7 +85,7 @@ class TelephonyService:
         # Формирование сообщения
         msg = f"От: {username}\n{error_text}"
         
-        # Кнопки только для BMW
+        # Кнопки (проверяем тип телефонии)
         keyboard = get_support_keyboard(user_id, tel_code)
         
         try:
@@ -97,6 +111,9 @@ class TelephonyService:
                     reply_to_message_id=sent_msg.message_id
                 )
                 logger.info(f"📎 Отправлен документ к ошибке")
+            
+            # Логируем в БД
+            db.log_error_report(user_id, username, tel_code, error_text)
             
             logger.info(f"✅ Ошибка отправлена в группу {group_id} от user_id={user_id}")
             return True
@@ -142,10 +159,21 @@ class TelephonyService:
         Returns:
             Текст сообщения
         """
-        if tel_code == "zvon":
-            return MESSAGES["error_sent_zvon"].format(tel=tel_name)
-        else:  # bmw
-            return MESSAGES["error_sent_bmw"].format(tel=tel_name)
+        # Проверяем тип телефонии
+        tel = db.get_telephony_by_code(tel_code)
+        
+        if tel:
+            # Из БД
+            if tel['type'] == 'black':
+                return MESSAGES["error_sent_zvon"].format(tel=tel_name)
+            else:
+                return MESSAGES["error_sent_bmw"].format(tel=tel_name)
+        else:
+            # Старые
+            if tel_code == "zvon":
+                return MESSAGES["error_sent_zvon"].format(tel=tel_name)
+            else:
+                return MESSAGES["error_sent_bmw"].format(tel=tel_name)
 
 
 # Глобальный экземпляр сервиса

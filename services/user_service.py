@@ -2,6 +2,7 @@
 Сервис для работы с пользователями
 """
 from config.settings import settings
+from database.models import db
 from utils.logger import logger
 
 
@@ -19,7 +20,12 @@ class UserService:
         Returns:
             True если доступ разрешён
         """
-        return user_id in settings.MANAGERS
+        # Проверяем в .env (админы, пульт, старые менеджеры)
+        if user_id in settings.MANAGERS:
+            return True
+        
+        # Проверяем в БД (новые менеджеры)
+        return db.is_manager(user_id)
     
     @staticmethod
     def is_admin(user_id: int) -> bool:

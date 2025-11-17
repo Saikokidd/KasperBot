@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 
 from config.constants import USEFUL_LINKS, MESSAGES
 from keyboards.reply import get_menu_by_role
-from keyboards.inline import get_telephony_keyboard
+from keyboards.inline import get_telephony_keyboard, get_management_menu
 from utils.state import get_user_role, set_support_mode, clear_tel_choice
 from utils.logger import logger
 
@@ -110,10 +110,14 @@ async def handle_bot_management_button(update: Update, context: ContextTypes.DEF
         update: Update объект
         context: Контекст пользователя
     """
+    # Показываем меню управления через inline кнопки
+    keyboard = get_management_menu()
+    
     await update.message.reply_text(
-        "⚙️ Управление ботом:\n\n"
-        "[Здесь будет панель управления]\n"
-        "Функция в разработке..."
+        "⚙️ <b>Управление ботом</b>\n\n"
+        "Выберите раздел:",
+        parse_mode="HTML",
+        reply_markup=keyboard
     )
 
 
