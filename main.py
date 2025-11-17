@@ -36,6 +36,14 @@ from handlers.management import (
     WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
 )
 
+from handlers.analytics import (
+    show_errors_stats_menu, show_general_stats, show_general_stats_period,
+    show_managers_stats, show_managers_stats_period,
+    show_support_stats, show_support_stats_period,
+    show_response_time_stats, show_response_time_stats_period
+)
+
+from handlers.menu import handle_menu_button
 
 def register_handlers(app: Application):
     """
@@ -110,6 +118,18 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"))
     app.add_handler(CallbackQueryHandler(list_telephonies, pattern="^mgmt_list_tel$"))
     app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="^broadcast_confirm$"))
+
+    # ===== CALLBACK HANDLERS ДЛЯ СТАТИСТИКИ ОШИБОК =====
+
+    app.add_handler(CallbackQueryHandler(show_errors_stats_menu, pattern="^stats_menu$"))
+    app.add_handler(CallbackQueryHandler(show_general_stats, pattern="^stats_general$"))
+    app.add_handler(CallbackQueryHandler(show_general_stats_period, pattern="^stats_gen_"))
+    app.add_handler(CallbackQueryHandler(show_managers_stats, pattern="^stats_managers$"))
+    app.add_handler(CallbackQueryHandler(show_managers_stats_period, pattern="^stats_mgr_"))
+    app.add_handler(CallbackQueryHandler(show_support_stats, pattern="^stats_support$"))
+    app.add_handler(CallbackQueryHandler(show_support_stats_period, pattern="^stats_sup_"))
+    app.add_handler(CallbackQueryHandler(show_response_time_stats, pattern="^stats_response_time$"))
+    app.add_handler(CallbackQueryHandler(show_response_time_stats_period, pattern="^stats_time_"))
     
     # ===== ОСНОВНЫЕ CALLBACK ОБРАБОТЧИКИ =====
     

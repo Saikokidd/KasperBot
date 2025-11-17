@@ -84,7 +84,16 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         
         tel_code = callback_data.split("_")[1]
-        tel_name = TEL_CODES_REVERSE.get(tel_code)
+        
+        # Получаем название из БД
+        from database.models import db
+        tel = db.get_telephony_by_code(tel_code)
+        
+        if tel:
+            tel_name = tel['name']
+        else:
+            # Фоллбэк на старые
+            tel_name = TEL_CODES_REVERSE.get(tel_code)
         
         if not tel_name:
             logger.error(f"❌ Неизвестный код телефонии: {tel_code}")
@@ -112,7 +121,7 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Обработчик нажатий на кнопки саппорта в группе (только для BMW)
+    Обработчик нажатий на кнопки саппорта в группе (только для белых телефоний)
     
     Args:
         update: Update объект
@@ -128,12 +137,78 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         action_code, user_id_str, tel_code = data
         user_id = int(user_id_str)
-        tel_name = TEL_CODES_REVERSE.get(tel_code, "Unknown")
+        
+        # Получаем название телефонии
+        from database.models import db
+        tel = db.get_telephony_by_code(tel_code)
+        tel_name = tel['name'] if tel else TEL_CODES_REVERSE.get(tel_code, "Unknown")
         
         action_text = SUPPORT_ACTIONS.get(action_code, "❓ Неизвестное действие")
-        support_user = query.from_user.first_name or "Саппорт"
+        support_user_id = query.from_user.id
+        support_username = query.from_user.username or query.from_user.first_name or "Саппорт"
         
-        logger.info(f"🔧 Саппорт действие: {action_text} для ошибки от user_id={user_id} ({tel_name}) от {support_user}")
+        logger.info(f"🔧 Саппорт действие: {action_text} для ошибки от user_id={user_id} ({tel_name}) от {support_username}")
+        
+        # ===== СОХРАНЕНИЕ В БД ДЛЯ АНАЛИТИКИ =====
+        try:
+            conn = db._get_connection()
+            cursor = conn.cursor()
+            
+            # Находим последнюю необработанную ошибку от этого пользователя
+            cursor.execute(
+                """
+                SELECT id, created_at FROM error_reports 
+                WHERE user_id = ? AND telephony_code = ? AND status = 'new'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (user_id, tel_code)
+            )
+            
+            error_record = cursor.fetchone()
+            
+            if error_record:
+                error_id = error_record[0]
+                created_at_str = error_record[1]
+                
+                # Парсим время создания
+                try:
+                    # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
+                    resolved_at = datetime.now()
+                    response_time = int((resolved_at - created_at).total_seconds())
+                except Exception as e:
+                    logger.error(f"Ошибка парсинга времени: {e}")
+                    response_time = None
+                    resolved_at = datetime.now()
+                
+                # Обновляем запись
+                cursor.execute(
+                    """
+                    UPDATE error_reports 
+                    SET status = 'resolved', 
+                        resolved_at = ?,
+                        support_user_id = ?,
+                        support_username = ?,
+                        support_action = ?,
+                        response_time_seconds = ?
+                    WHERE id = ?
+                    """,
+                    (resolved_at.strftime("%Y-%m-%d %H:%M:%S"), support_user_id, support_username, 
+                     action_code, response_time, error_id)
+                )
+                
+                conn.commit()
+                
+                minutes = response_time // 60 if response_time else 0
+                seconds = response_time % 60 if response_time else 0
+                logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
+            else:
+                logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
         
         # Получаем оригинальный текст и добавляем статус
         original_text = query.message.text_html or query.message.text
@@ -145,7 +220,7 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_message = (
             f"{original_text}\n"
             f"{action_text}\n"
-            f"<b>Обработал:</b> {support_user}"
+            f"<b>Обработал:</b> {support_username}"
         )
         
         # Редактируем текущее сообщение (убираем кнопки и добавляем статус)

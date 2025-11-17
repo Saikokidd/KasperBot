@@ -121,6 +121,24 @@ async def handle_bot_management_button(update: Update, context: ContextTypes.DEF
     )
 
 
+async def handle_errors_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки 'Статистика ошибок'"""
+    from keyboards.inline import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 Общая статистика", callback_data="stats_general")],
+        [InlineKeyboardButton("👤 По менеджерам", callback_data="stats_managers")],
+        [InlineKeyboardButton("🛠 По саппорту", callback_data="stats_support")],
+        [InlineKeyboardButton("⏱ Время реакции", callback_data="stats_response_time")]
+    ])
+    
+    await update.message.reply_text(
+        "📊 <b>Статистика ошибок</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
 async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Главный обработчик кнопок меню
@@ -147,6 +165,7 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Статистика трубок": handle_stats_button,
         "Статистика менеджеров": handle_managers_stats_button,
         "Управление ботом": handle_bot_management_button,
+        "Статистика ошибок": handle_errors_stats_button,
     }
     
     action = menu_actions.get(text)
