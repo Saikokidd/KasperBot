@@ -2,6 +2,7 @@
 Inline клавиатуры (кнопки в сообщениях)
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from config.constants import QUICK_ERROR_BUTTONS
 from database.models import db
 
 
@@ -97,3 +98,46 @@ def get_telephony_type_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⚪️ Белая (с кнопками саппорта)", callback_data="tel_type_white")],
         [InlineKeyboardButton("⚫️ Чёрная (без кнопок)", callback_data="tel_type_black")]
     ])
+    
+
+# ✅ НОВАЯ ФУНКЦИЯ: Клавиатура быстрых ошибок BMW
+def get_quick_errors_keyboard() -> InlineKeyboardMarkup:
+    """
+    Возвращает клавиатуру быстрых ошибок BMW (2 колонки)
+    
+    Returns:
+        InlineKeyboardMarkup с 10 кнопками ошибок + изменить SIP
+    """
+    buttons = [
+        # Первый ряд
+        [
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["1"], callback_data="qerr_1"),
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["2"], callback_data="qerr_2")
+        ],
+        # Второй ряд
+        [
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["3"], callback_data="qerr_3"),
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["4"], callback_data="qerr_4")
+        ],
+        # Третий ряд
+        [
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["5"], callback_data="qerr_5"),
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["6"], callback_data="qerr_6")
+        ],
+        # Четвёртый ряд
+        [
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["7"], callback_data="qerr_7"),
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["8"], callback_data="qerr_8")
+        ],
+        # Пятый ряд
+        [
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["9"], callback_data="qerr_9"),
+            InlineKeyboardButton(QUICK_ERROR_BUTTONS["10"], callback_data="qerr_10")
+        ],
+        # Шестой ряд - изменить SIP
+        [
+            InlineKeyboardButton("⚙️ Изменить SIP", callback_data="change_sip")
+        ]
+    ]
+    
+    return InlineKeyboardMarkup(buttons)

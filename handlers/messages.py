@@ -1,5 +1,6 @@
 """
-Главный обработчик текстовых сообщений
+Обновленная handlers/messages.py - ПОЛНАЯ ВЕРСИЯ
+Добавлена поддержка выбора телефонии через Reply кнопки
 """
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
@@ -11,23 +12,15 @@ from services.telephony_service import telephony_service
 from keyboards.reply import get_menu_by_role
 from utils.state import (
     get_user_role, is_support_mode, set_support_mode,
-    get_tel_choice, clear_tel_choice, is_tel_choice_expired
+    get_tel_choice, clear_tel_choice, is_tel_choice_expired,
+    set_tel_choice  # ✅ ДОБАВЛЕНО
 )
 from utils.logger import logger
 from handlers.menu import handle_menu_button
 
 
 async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Обрабатывает сообщения в режиме поддержки
-    
-    Args:
-        update: Update объект
-        context: Контекст пользователя
-        
-    Returns:
-        True если сообщение обработано как вопрос поддержки
-    """
+    """Обрабатывает сообщения в режиме поддержки"""
     if not is_support_mode(context):
         return False
     
@@ -40,7 +33,6 @@ async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_T
     )
     
     try:
-        # Отправляем всем админам
         for admin_id in settings.ADMINS:
             try:
                 await context.bot.send_message(
@@ -69,14 +61,55 @@ async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_T
     return True
 
 
-async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ✅ НОВОЕ: Обработчик выбора телефонии из Reply меню
+async def handle_telephony_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
-    Обрабатывает сообщение как описание ошибки телефонии
+    Обрабатывает выбор телефонии из Reply кнопок (BMW, Звонари)
     
     Args:
         update: Update объект
         context: Контекст пользователя
+        
+    Returns:
+        True если обработано как выбор телефонии
     """
+    text = update.message.text
+    
+    # Список доступных телефоний
+    from database.models import db
+    telephonies = db.get_all_telephonies()
+    
+    # Создаём словарь название → код
+    tel_map = {}
+    if telephonies:
+        for tel in telephonies:
+            tel_map[tel['name']] = tel['code']
+    else:
+        # Фолбэк на старые
+        tel_map = {"BMW": "bmw", "Звонари": "zvon"}
+    
+    # Проверяем, является ли текст названием телефонии
+    if text in tel_map:
+        tel_name = text
+        tel_code = tel_map[text]
+        
+        # Сохраняем выбор
+        set_tel_choice(context, tel_name, tel_code)
+        
+        logger.info(f"✅ User {update.effective_user.id} выбрал телефонию: {tel_name} ({tel_code})")
+        
+        await update.message.reply_text(
+            f"✅ Вы выбрали: <b>{tel_name}</b>\n\n"
+            f"📝 Теперь отправьте описание ошибки",
+            parse_mode="HTML"
+        )
+        return True
+    
+    return False
+
+
+async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сообщение как описание ошибки телефонии"""
     user_id = update.effective_user.id
     username = update.effective_user.first_name or "Пользователь"
     role = get_user_role(context)
@@ -149,13 +182,7 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Главный обработчик всех текстовых сообщений
-    
-    Args:
-        update: Update объект
-        context: Контекст пользователя
-    """
+    """Главный обработчик всех текстовых сообщений"""
     user_id = update.effective_user.id
     
     # Проверка доступа
@@ -172,10 +199,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_support_message(update, context):
         return
     
+    # ✅ НОВОЕ: Проверка выбора телефонии (BMW, Звонари)
+    if await handle_telephony_choice(update, context):
+        return
+    
     # Список кнопок меню
     menu_texts = {
         "Ошибки телефонии", "Полезные ссылки",
-        "Статистика трубок", "Статистика менеджеров", "Управление ботом"
+        "Статистика трубок", "Статистика менеджеров", 
+        "Статистика ошибок",
+        "Управление ботом",
+        "◀️ Меню"  # ✅ ДОБАВЛЕНО
     }
     
     # Если это кнопка меню

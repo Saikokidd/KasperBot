@@ -1,6 +1,11 @@
 """
+ИСПРАВЛЕННЫЙ ФАЙЛ: main.py
 Главная точка входа для запуска Telegram бота
-Совместим с bash-скриптами: start.sh, stop.sh, status.sh
+
+ИЗМЕНЕНИЯ:
+✅ handle_quick_error_callback теперь внутри ConversationHandler
+✅ Удалён отдельный CallbackQueryHandler для быстрых ошибок (qerr_*)
+✅ Удалён CallbackQueryHandler для change_sip
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -36,14 +41,18 @@ from handlers.management import (
     WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
 )
 
+# Импортируем обработчики аналитики
 from handlers.analytics import (
     show_errors_stats_menu, show_general_stats, show_general_stats_period,
     show_managers_stats, show_managers_stats_period,
     show_support_stats, show_support_stats_period,
-    show_response_time_stats, show_response_time_stats_period
+    show_response_time_stats, show_response_time_stats_period,
+    show_dashboard_start, show_dashboard_page
 )
 
-from handlers.menu import handle_menu_button
+# Импортируем ConversationHandler для быстрых ошибок
+from handlers.quick_errors import quick_bmw_conv
+
 
 def register_handlers(app: Application):
     """
@@ -110,6 +119,9 @@ def register_handlers(app: Application):
     )
     app.add_handler(broadcast_conv)
     
+    # ✅ ИСПРАВЛЕНО: ConversationHandler для BMW теперь обрабатывает всё
+    app.add_handler(quick_bmw_conv)
+    
     # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
     
     app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"))
@@ -118,10 +130,16 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"))
     app.add_handler(CallbackQueryHandler(list_telephonies, pattern="^mgmt_list_tel$"))
     app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="^broadcast_confirm$"))
-
+    
     # ===== CALLBACK HANDLERS ДЛЯ СТАТИСТИКИ ОШИБОК =====
-
+    
     app.add_handler(CallbackQueryHandler(show_errors_stats_menu, pattern="^stats_menu$"))
+    
+    # Дашборд
+    app.add_handler(CallbackQueryHandler(show_dashboard_start, pattern="^dash_start_"))
+    app.add_handler(CallbackQueryHandler(show_dashboard_page, pattern="^dash_page_"))
+    
+    # Старые обработчики (обратная совместимость)
     app.add_handler(CallbackQueryHandler(show_general_stats, pattern="^stats_general$"))
     app.add_handler(CallbackQueryHandler(show_general_stats_period, pattern="^stats_gen_"))
     app.add_handler(CallbackQueryHandler(show_managers_stats, pattern="^stats_managers$"))
@@ -130,6 +148,9 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(show_support_stats_period, pattern="^stats_sup_"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats, pattern="^stats_response_time$"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats_period, pattern="^stats_time_"))
+    
+    # ✅ УДАЛЕНО: Отдельные CallbackQueryHandler для быстрых ошибок
+    # (теперь всё внутри quick_bmw_conv)
     
     # ===== ОСНОВНЫЕ CALLBACK ОБРАБОТЧИКИ =====
     
@@ -149,10 +170,7 @@ def register_handlers(app: Application):
 
 
 def main():
-    """
-    Главная функция запуска бота
-    Совместима с bash-скриптами для управления ботом
-    """
+    """Главная функция запуска бота"""
     try:
         logger.info("🚀 Запуск бота...")
         logger.info(f"📋 Менеджеров в системе: {len(settings.MANAGERS)}")
@@ -170,12 +188,37 @@ def main():
         
         logger.info("✅ Бот успешно запущен и готов к работе!")
         
-        # Запуск polling
-        app.run_polling(allowed_updates=["message", "callback_query"])
+        # ===== ЗАПУСК ПЛАНИРОВЩИКА (ПОСЛЕ РЕГИСТРАЦИИ ОБРАБОТЧИКОВ) =====
+        try:
+            from services.scheduler_service import scheduler_service
+            
+            if not scheduler_service.scheduler.running:
+                scheduler_service.start()
+                logger.info("✅ Планировщик задач настроен")
+            else:
+                logger.info("✅ Планировщик уже запущен")
+        except Exception as e:
+            logger.warning(f"⚠️ Планировщик не запущен: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+        # ===================================
+        
+        # Запуск polling (блокирует выполнение)
+        app.run_polling(
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True
+        )
         
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при запуске бота: {e}", exc_info=True)
         raise
+    finally:
+        # Останавливаем планировщик при выключении
+        try:
+            from services.scheduler_service import scheduler_service
+            scheduler_service.stop()
+        except:
+            pass
 
 
 if __name__ == "__main__":

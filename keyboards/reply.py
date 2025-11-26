@@ -1,8 +1,9 @@
 """
-Reply клавиатуры (кнопки под полем ввода)
+Обновленная keyboards/reply.py - ПОЛНАЯ ВЕРСИЯ
+Добавлено меню выбора телефонии
 """
 from telegram import ReplyKeyboardMarkup, KeyboardButton
-from config.constants import MANAGER_MENU, ADMIN_MENU, PULT_MENU
+from config.constants import MANAGER_MENU, ADMIN_MENU, PULT_MENU, TELEPHONY_MENU
 
 
 def get_manager_menu() -> ReplyKeyboardMarkup:
@@ -59,3 +60,17 @@ def get_menu_by_role(role: str) -> ReplyKeyboardMarkup:
     elif role == "pult":
         return get_pult_menu()
     return get_manager_menu()
+
+
+# ✅ НОВОЕ: Меню выбора телефонии
+def get_telephony_menu() -> ReplyKeyboardMarkup:
+    """
+    Генерирует клавиатуру выбора телефонии
+    
+    Returns:
+        ReplyKeyboardMarkup с кнопками телефоний + Меню
+    """
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(text) for text in row] for row in TELEPHONY_MENU],
+        resize_keyboard=True
+    )

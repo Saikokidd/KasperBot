@@ -1,8 +1,8 @@
 """
-Сервис аналитики ошибок телефонии
+Сервис аналитики ошибок телефонии - исправленная версия
 """
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from database.models import db
 from utils.logger import logger
 
@@ -11,35 +11,35 @@ class AnalyticsService:
     """Сервис для получения аналитики по ошибкам"""
     
     @staticmethod
-    def get_general_stats(period: str = "today") -> str:
-        """
-        Общая статистика ошибок
+    def _get_period_filter(period: str) -> Tuple[str, str, str]:
+        """Возвращает фильтр и название для периода"""
+        if period == "today":
+            date_filter = datetime.now().strftime("%Y-%m-%d")
+            title = "за сегодня"
+            where_clause = "DATE(created_at) = ?"
+        elif period == "week":
+            date_filter = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            title = "за неделю"
+            where_clause = "DATE(created_at) >= ?"
+        else:  # month
+            date_filter = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            title = "за месяц"
+            where_clause = "DATE(created_at) >= ?"
         
-        Args:
-            period: 'today', 'week', 'month'
-            
-        Returns:
-            Форматированная строка со статистикой
+        return where_clause, date_filter, title
+    
+    @staticmethod
+    def get_dashboard_overview(period: str = "today") -> str:
+        """
+        Страница 1: Общий обзор (ИСПРАВЛЕНО - убрали "в обработке")
         """
         try:
             conn = db._get_connection()
             cursor = conn.cursor()
             
-            # Определяем период
-            if period == "today":
-                date_filter = datetime.now().strftime("%Y-%m-%d")
-                title = "за сегодня"
-                where_clause = "DATE(created_at) = ?"
-            elif period == "week":
-                date_filter = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-                title = "за неделю"
-                where_clause = "DATE(created_at) >= ?"
-            else:  # month
-                date_filter = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-                title = "за месяц"
-                where_clause = "DATE(created_at) >= ?"
+            where_clause, date_filter, title = AnalyticsService._get_period_filter(period)
             
-            # Общее количество
+            # Общие данные
             cursor.execute(
                 f"SELECT COUNT(*) FROM error_reports WHERE {where_clause}",
                 (date_filter,)
@@ -48,7 +48,18 @@ class AnalyticsService:
             
             if total == 0:
                 conn.close()
-                return f"📊 <b>Общая статистика {title}</b>\n\n📭 Ошибок не найдено."
+                return f"📊 <b>ДАШБОРД {title.upper()}</b>\n\n📭 Ошибок не найдено."
+            
+            # Только решённые (все с support_action)
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM error_reports 
+                WHERE {where_clause} AND support_action IS NOT NULL
+                """,
+                (date_filter,)
+            )
+            resolved = cursor.fetchone()[0]
             
             # По телефониям
             cursor.execute(
@@ -63,137 +74,141 @@ class AnalyticsService:
             )
             by_telephony = cursor.fetchall()
             
-            # По статусам
+            # Среднее время ответа (только до 30 минут)
             cursor.execute(
                 f"""
-                SELECT status, COUNT(*) as cnt 
+                SELECT AVG(response_time_seconds)
                 FROM error_reports 
-                WHERE {where_clause}
-                GROUP BY status
+                WHERE {where_clause} 
+                AND response_time_seconds IS NOT NULL 
+                AND response_time_seconds <= 1800
                 """,
                 (date_filter,)
             )
-            by_status = cursor.fetchall()
+            avg_time = cursor.fetchone()[0]
             
             conn.close()
             
             # Форматирование
-            result = f"📊 <b>Общая статистика {title}</b>\n\n"
-            result += f"📈 Всего ошибок: <b>{total}</b>\n\n"
+            result = f"📊 <b>ДАШБОРД {title.upper()}</b>\n"
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
+            # Общее
+            resolved_pct = int((resolved / total) * 100) if total > 0 else 0
+            
+            result += f"📈 <b>ОБЩЕЕ:</b>\n"
+            result += f"• Всего ошибок: <b>{total}</b>\n"
+            result += f"• ✅ Решено: {resolved} ({resolved_pct}%)\n\n"
+            
+            # По телефониям с прогресс-барами
             if by_telephony:
-                result += "📞 <b>По телефониям:</b>\n"
+                result += f"📞 <b>ПО ТЕЛЕФОНИЯМ:</b>\n"
                 for tel_code, count in by_telephony:
-                    percentage = int((count / total) * 100) if total > 0 else 0
-                    # Получаем название телефонии
                     tel = db.get_telephony_by_code(tel_code)
                     tel_name = tel['name'] if tel else tel_code.upper()
-                    result += f"• {tel_name}: {count} ({percentage}%)\n"
+                    percentage = int((count / total) * 100)
+                    
+                    # Прогресс-бар
+                    filled = int(percentage / 10)
+                    bar = "█" * filled + "░" * (10 - filled)
+                    
+                    result += f"• {tel_name}: {bar} {count} ({percentage}%)\n"
                 result += "\n"
             
-            if by_status:
-                result += "🔄 <b>По статусам:</b>\n"
-                status_names = {
-                    'new': '🆕 Новые',
-                    'resolved': '✅ Решены'
-                }
-                for status, count in by_status:
-                    status_name = status_names.get(status, status)
-                    percentage = int((count / total) * 100) if total > 0 else 0
-                    result += f"• {status_name}: {count} ({percentage}%)\n"
+            # Среднее время
+            if avg_time:
+                minutes = int(avg_time // 60)
+                seconds = int(avg_time % 60)
+                result += f"⏱ <b>СРЕДНЕЕ ВРЕМЯ ОТВЕТА:</b>\n"
+                result += f"• {minutes}м {seconds}с\n\n"
+            
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            result += "📄 Страница 1 из 4"
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Ошибка получения общей статистики: {e}", exc_info=True)
-            return "⚠️ Ошибка получения статистики"
+            logger.error(f"❌ Ошибка дашборда: {e}", exc_info=True)
+            return "⚠️ Ошибка получения данных"
     
     @staticmethod
-    def get_managers_stats(period: str = "today", limit: int = 10) -> str:
+    def get_dashboard_managers(period: str = "today") -> str:
         """
-        Статистика по менеджерам (кто сколько ошибок отправил)
-        
-        Args:
-            period: 'today', 'week', 'month'
-            limit: Количество топ менеджеров
-            
-        Returns:
-            Форматированная строка
+        Страница 2: Все менеджеры (ИСПРАВЛЕНО - без медалей, выровнена таблица)
         """
         try:
             conn = db._get_connection()
             cursor = conn.cursor()
             
-            # Определяем период
-            if period == "today":
-                date_filter = datetime.now().strftime("%Y-%m-%d")
-                title = "за сегодня"
-                where_clause = "DATE(created_at) = ?"
-            elif period == "week":
-                date_filter = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-                title = "за неделю"
-                where_clause = "DATE(created_at) >= ?"
-            else:
-                date_filter = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-                title = "за месяц"
-                where_clause = "DATE(created_at) >= ?"
+            where_clause, date_filter, title = AnalyticsService._get_period_filter(period)
             
-            # Топ менеджеров по количеству ошибок
+            # Все менеджеры
             cursor.execute(
                 f"""
-                SELECT username, COUNT(*) as cnt 
+                SELECT username, user_id, COUNT(*) as cnt 
                 FROM error_reports 
                 WHERE {where_clause}
                 GROUP BY user_id 
-                ORDER BY cnt DESC 
-                LIMIT ?
+                ORDER BY cnt DESC
                 """,
-                (date_filter, limit)
+                (date_filter,)
             )
-            top_managers = cursor.fetchall()
+            managers = cursor.fetchall()
+            
+            # Общее количество ошибок
+            cursor.execute(
+                f"SELECT COUNT(*) FROM error_reports WHERE {where_clause}",
+                (date_filter,)
+            )
+            total = cursor.fetchone()[0]
             
             conn.close()
             
-            if not top_managers:
-                return f"👤 <b>Статистика менеджеров {title}</b>\n\n📭 Ошибок не найдено."
+            if not managers:
+                return f"👥 <b>ВСЕ МЕНЕДЖЕРЫ {title.upper()}</b>\n\n📭 Данных нет."
             
-            result = f"👤 <b>Топ-{limit} менеджеров {title}</b>\n\n"
+            result = f"👥 <b>ВСЕ МЕНЕДЖЕРЫ {title.upper()}</b>\n"
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            for i, (username, count) in enumerate(top_managers, 1):
-                name = username or "Неизвестно"
-                medal = ""
-                if i == 1:
-                    medal = "🥇 "
-                elif i == 2:
-                    medal = "🥈 "
-                elif i == 3:
-                    medal = "🥉 "
+            # Таблица с моноширинным шрифтом
+            result += "<pre>"
+            result += "┌───┬──────────────┬──────┬────┐\n"
+            result += "│ # │     Имя      │Ошибок│ %  │\n"
+            result += "├───┼──────────────┼──────┼────┤\n"
+            
+            for i, (username, user_id, count) in enumerate(managers, 1):
+                name = username or f"ID{user_id}"
+                # Обрезаем имя если длинное
+                if len(name) > 12:
+                    name = name[:9] + "..."
                 
-                result += f"{medal}{i}. <b>{name}</b> - {count} ошибок\n"
+                percentage = int((count / total) * 100) if total > 0 else 0
+                
+                # Выравнивание
+                result += f"│{i:2} │ {name:12} │ {count:4} │{percentage:3}%│\n"
+            
+            result += "└───┴──────────────┴──────┴────┘"
+            result += "</pre>\n\n"
+            
+            result += f"Всего: {len(managers)} менеджеров | {total} ошибок\n\n"
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            result += "📄 Страница 2 из 4"
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статистики менеджеров: {e}", exc_info=True)
-            return "⚠️ Ошибка получения статистики"
+            logger.error(f"❌ Ошибка статистики менеджеров: {e}", exc_info=True)
+            return "⚠️ Ошибка получения данных"
     
     @staticmethod
-    def get_support_stats(period: str = "today", limit: int = 10) -> str:
+    def get_dashboard_support(period: str = "today") -> str:
         """
-        Статистика по саппорту (кто сколько обработал)
-        
-        Args:
-            period: 'today', 'week', 'month'
-            limit: Количество топ саппортов
-            
-        Returns:
-            Форматированная строка
+        Страница 3: Все саппорты (ИСПРАВЛЕНО - без медалей, время в конце)
         """
         try:
             conn = db._get_connection()
             cursor = conn.cursor()
             
-            # Определяем период
             if period == "today":
                 date_filter = datetime.now().strftime("%Y-%m-%d")
                 title = "за сегодня"
@@ -207,70 +222,78 @@ class AnalyticsService:
                 title = "за месяц"
                 where_clause = "DATE(resolved_at) >= ?"
             
-            # Топ саппортов
+            # Все саппорты (только до 30 минут)
             cursor.execute(
                 f"""
-                SELECT support_username, COUNT(*) as cnt,
-                       AVG(response_time_seconds) as avg_time
+                SELECT support_username, support_user_id, 
+                       COUNT(*) as total,
+                       AVG(CASE WHEN response_time_seconds <= 1800 THEN response_time_seconds END) as avg_time,
+                       SUM(CASE WHEN support_action = 'fix' THEN 1 ELSE 0 END) as fixed,
+                       SUM(CASE WHEN support_action = 'wait' THEN 1 ELSE 0 END) as wait,
+                       SUM(CASE WHEN support_action = 'wrong' THEN 1 ELSE 0 END) as wrong,
+                       SUM(CASE WHEN support_action = 'sim' THEN 1 ELSE 0 END) as sim
                 FROM error_reports 
                 WHERE {where_clause} AND support_username IS NOT NULL
                 GROUP BY support_user_id 
-                ORDER BY cnt DESC 
-                LIMIT ?
+                ORDER BY total DESC
                 """,
-                (date_filter, limit)
+                (date_filter,)
             )
-            top_support = cursor.fetchall()
+            supports = cursor.fetchall()
             
             conn.close()
             
-            if not top_support:
-                return f"🛠 <b>Статистика саппорта {title}</b>\n\n�� Обработанных ошибок не найдено."
+            if not supports:
+                return f"🛠 <b>ВСЕ САППОРТЫ {title.upper()}</b>\n\n📭 Данных нет."
             
-            result = f"🛠 <b>Топ-{limit} саппортов {title}</b>\n\n"
+            result = f"🛠 <b>ВСЕ САППОРТЫ {title.upper()}</b>\n"
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            for i, (username, count, avg_time) in enumerate(top_support, 1):
-                name = username or "Неизвестно"
-                medal = ""
-                if i == 1:
-                    medal = "🥇 "
-                elif i == 2:
-                    medal = "🥈 "
-                elif i == 3:
-                    medal = "🥉 "
+            for i, (username, user_id, total, avg_time, fixed, wait, wrong, sim) in enumerate(supports, 1):
+                name = username or f"ID{user_id}"
                 
-                # Форматируем среднее время
+                result += f"{i}. <b>{name}</b> - {total}\n"
+                
+                # Детализация по действиям
+                actions = []
+                if fixed > 0:
+                    actions.append(f"✅ Исправлено: {fixed}")
+                if wait > 0:
+                    actions.append(f"⏱ 2-3 мин: {wait}")
+                if wrong > 0:
+                    actions.append(f"⚠️ Неверный формат: {wrong}")
+                if sim > 0:
+                    actions.append(f"✅ Сим ворк: {sim}")
+                
+                for action in actions:
+                    result += f"   {action}\n"
+                
+                # Среднее время в конце
                 if avg_time:
                     minutes = int(avg_time // 60)
                     seconds = int(avg_time % 60)
-                    time_str = f"⏱ {minutes}м {seconds}с"
-                else:
-                    time_str = "⏱ нет данных"
+                    result += f"   ⏱ Среднее: {minutes}м {seconds}с\n"
                 
-                result += f"{medal}{i}. <b>{name}</b> - {count} ошибок ({time_str})\n"
+                result += "\n"
+            
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            result += "📄 Страница 3 из 4"
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статистики саппорта: {e}", exc_info=True)
-            return "⚠️ Ошибка получения статистики"
+            logger.error(f"❌ Ошибка статистики саппорта: {e}", exc_info=True)
+            return "⚠️ Ошибка получения данных"
     
     @staticmethod
-    def get_response_time_stats(period: str = "today") -> str:
+    def get_dashboard_timing(period: str = "today") -> str:
         """
-        Статистика времени реакции саппорта
-        
-        Args:
-            period: 'today', 'week', 'month'
-            
-        Returns:
-            Форматированная строка
+        Страница 4: Время реакции (ИСПРАВЛЕНО - только до 30 минут)
         """
         try:
             conn = db._get_connection()
             cursor = conn.cursor()
             
-            # Определяем период
             if period == "today":
                 date_filter = datetime.now().strftime("%Y-%m-%d")
                 title = "за сегодня"
@@ -284,7 +307,7 @@ class AnalyticsService:
                 title = "за месяц"
                 where_clause = "DATE(resolved_at) >= ?"
             
-            # Среднее время
+            # Только ошибки обработанные до 30 минут
             cursor.execute(
                 f"""
                 SELECT AVG(response_time_seconds), 
@@ -292,20 +315,39 @@ class AnalyticsService:
                        MAX(response_time_seconds),
                        COUNT(*)
                 FROM error_reports 
-                WHERE {where_clause} AND response_time_seconds IS NOT NULL
+                WHERE {where_clause} 
+                AND response_time_seconds IS NOT NULL
+                AND response_time_seconds <= 1800
                 """,
                 (date_filter,)
             )
             stats = cursor.fetchone()
             
+            # Распределение
+            cursor.execute(
+                f"""
+                SELECT 
+                    SUM(CASE WHEN response_time_seconds < 120 THEN 1 ELSE 0 END) as under_2min,
+                    SUM(CASE WHEN response_time_seconds BETWEEN 120 AND 300 THEN 1 ELSE 0 END) as from_2_5,
+                    SUM(CASE WHEN response_time_seconds BETWEEN 300 AND 600 THEN 1 ELSE 0 END) as from_5_10,
+                    SUM(CASE WHEN response_time_seconds BETWEEN 600 AND 1800 THEN 1 ELSE 0 END) as from_10_30
+                FROM error_reports 
+                WHERE {where_clause} 
+                AND response_time_seconds IS NOT NULL
+                AND response_time_seconds <= 1800
+                """,
+                (date_filter,)
+            )
+            distribution = cursor.fetchone()
+            
             conn.close()
             
             if not stats or stats[3] == 0:
-                return f"⏱ <b>Время реакции {title}</b>\n\n📭 Данных нет."
+                return f"⏱ <b>ВРЕМЯ РЕАКЦИИ {title.upper()}</b>\n\n📭 Данных нет."
             
             avg_time, min_time, max_time, count = stats
+            under_2, from_2_5, from_5_10, from_10_30 = distribution
             
-            # Форматируем
             def format_time(seconds):
                 if not seconds:
                     return "нет данных"
@@ -313,17 +355,48 @@ class AnalyticsService:
                 s = int(seconds % 60)
                 return f"{m}м {s}с"
             
-            result = f"⏱ <b>Время реакции саппорта {title}</b>\n\n"
-            result += f"📊 Обработано ошибок: {count}\n\n"
-            result += f"🔹 Среднее время: <b>{format_time(avg_time)}</b>\n"
+            result = f"⏱ <b>ВРЕМЯ РЕАКЦИИ {title.upper()}</b>\n"
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            result += f"📊 <b>Обработано ошибок:</b> {count}\n\n"
+            
+            result += f"🔹 Среднее: <b>{format_time(avg_time)}</b>\n"
             result += f"🟢 Быстрейший: {format_time(min_time)}\n"
-            result += f"🔴 Самый долгий: {format_time(max_time)}\n"
+            result += f"🔴 Самый долгий: {format_time(max_time)}\n\n"
+            
+            # Распределение
+            result += "📈 <b>РАСПРЕДЕЛЕНИЕ:</b>\n\n"
+            
+            pct_under_2 = int((under_2 / count) * 100) if count > 0 else 0
+            pct_2_5 = int((from_2_5 / count) * 100) if count > 0 else 0
+            pct_5_10 = int((from_5_10 / count) * 100) if count > 0 else 0
+            pct_10_30 = int((from_10_30 / count) * 100) if count > 0 else 0
+            
+            # Прогресс-бары
+            def bar(percentage):
+                filled = int(percentage / 10)
+                return "█" * filled + "░" * (10 - filled)
+            
+            result += f"🟢 До 2 мин:\n"
+            result += f"   {bar(pct_under_2)} {under_2} ({pct_under_2}%)\n\n"
+            
+            result += f"🟡 2-5 мин:\n"
+            result += f"   {bar(pct_2_5)} {from_2_5} ({pct_2_5}%)\n\n"
+            
+            result += f"🟠 5-10 мин:\n"
+            result += f"   {bar(pct_5_10)} {from_5_10} ({pct_5_10}%)\n\n"
+            
+            result += f"🔴 10-30 мин:\n"
+            result += f"   {bar(pct_10_30)} {from_10_30} ({pct_10_30}%)\n\n"
+            
+            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            result += "📄 Страница 4 из 4"
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статистики времени: {e}", exc_info=True)
-            return "⚠️ Ошибка получения статистики"
+            logger.error(f"❌ Ошибка статистики времени: {e}", exc_info=True)
+            return "⚠️ Ошибка получения данных"
 
 
 # Глобальный экземпляр сервиса

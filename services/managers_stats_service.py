@@ -1,5 +1,5 @@
 """
-Сервис для работы со статистикой менеджеров из Google Sheets
+Сервис для работы со статистикой менеджеров из Google Sheets - улучшенная визуализация
 """
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
@@ -16,7 +16,7 @@ class ManagersStatsService:
         Получает статистику менеджеров за сегодня
         
         Returns:
-            Форматированная строка со статистикой
+            Форматированная строка со статистикой в стиле дашборда
         """
         try:
             # Получаем данные из таблицы
@@ -25,8 +25,8 @@ class ManagersStatsService:
             # Группируем по менеджерам
             stats_by_manager = self._group_by_manager(data)
             
-            # Форматируем результат
-            result = self._format_stats(stats_by_manager)
+            # Форматируем результат в новом стиле
+            result = self._format_stats_dashboard(stats_by_manager)
             
             return result
             
@@ -35,12 +35,7 @@ class ManagersStatsService:
             return "⚠️ Ошибка получения статистики менеджеров"
     
     async def _fetch_managers_data(self) -> List[Dict]:
-        """
-        Получает данные менеджеров из Google Sheets
-        
-        Returns:
-            Список словарей с данными
-        """
+        """Получает данные менеджеров из Google Sheets"""
         url = settings.GOOGLE_APPS_SCRIPT_URL
         
         if not url:
@@ -73,15 +68,7 @@ class ManagersStatsService:
             raise
     
     def _group_by_manager(self, data: List[Dict]) -> Dict[str, Dict[str, int]]:
-        """
-        Группирует данные по менеджерам и цветам
-        
-        Args:
-            data: Данные из Google Sheets
-            
-        Returns:
-            Словарь {менеджер: {цвет: количество}}
-        """
+        """Группирует данные по менеджерам и цветам"""
         stats = {}
         
         for row in data:
@@ -103,9 +90,9 @@ class ManagersStatsService:
         
         return stats
     
-    def _format_stats(self, stats: Dict[str, Dict[str, int]]) -> str:
+    def _format_stats_dashboard(self, stats: Dict[str, Dict[str, int]]) -> str:
         """
-        Форматирует статистику в текст
+        Форматирует статистику в стиле дашборда ошибок
         
         Args:
             stats: Статистика по менеджерам
@@ -122,8 +109,8 @@ class ManagersStatsService:
             "ФИОЛЕТОВЫЙ": "🟪"
         }
         
-        result = f"👥 <b>Статистика менеджеров (Павлоград) на {current_time}</b>\n"
-        result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        if not stats:
+            return f"👥 <b>МЕНЕДЖЕРЫ (ПАВЛОГРАД) на {current_time}</b>\n\n📭 Данных нет."
         
         # Сортируем по общему количеству (больше → меньше)
         sorted_managers = sorted(
@@ -132,33 +119,75 @@ class ManagersStatsService:
             reverse=True
         )
         
-        for manager, colors in sorted_managers:
+        # Считаем общее
+        total_calls = sum(sum(colors.values()) for colors in stats.values())
+        
+        result = f"👥 <b>МЕНЕДЖЕРЫ (ПАВЛОГРАД) на {current_time}</b>\n"
+        result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        result += f"📊 <b>ОБЩЕЕ:</b>\n"
+        result += f"• Всего трубок: <b>{total_calls}</b>\n"
+        result += f"• Менеджеров: {len(stats)}\n\n"
+        
+        result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        for i, (manager, colors) in enumerate(sorted_managers, 1):
             total = sum(colors.values())
             
             if total == 0:
                 continue
             
             green = colors["ЗЕЛЕНЫЙ"]
-            purple = colors["ФИОЛЕТОВЫЙ"]
             yellow = colors["ЖЕЛТЫЙ"]
+            purple = colors["ФИОЛЕТОВЫЙ"]
             
-            green_pct = int((green / total) * 100) if total > 0 else 0
-            purple_pct = int((purple / total) * 100) if total > 0 else 0
-            yellow_pct = int((yellow / total) * 100) if total > 0 else 0
+            # Процент от общего количества
+            percentage = int((total / total_calls) * 100) if total_calls > 0 else 0
             
-            result += f"<b>{manager}:</b> {total}\n"
+            # Прогресс-бар
+            filled = int(percentage / 10) if percentage <= 100 else 10
+            bar = "█" * filled + "░" * (10 - filled)
             
-            # Показываем только цвета которые есть
-            colors_to_show = []
+            result += f"<b>{i}. {manager}</b> - {total} трубок\n"
+            result += f"{bar} {percentage}%\n"
+            
+            # Детализация по цветам (только если есть)
+            colors_line = []
             if green > 0:
-                colors_to_show.append(f"{green}{COLOR_EMOJI['ЗЕЛЕНЫЙ']}({green_pct}%)")
-            if purple > 0:
-                colors_to_show.append(f"{purple}{COLOR_EMOJI['ФИОЛЕТОВЫЙ']}({purple_pct}%)")
+                green_pct = int((green / total) * 100)
+                colors_line.append(f"{COLOR_EMOJI['ЗЕЛЕНЫЙ']} {green} ({green_pct}%)")
             if yellow > 0:
-                colors_to_show.append(f"{yellow}{COLOR_EMOJI['ЖЕЛТЫЙ']}({yellow_pct}%)")
+                yellow_pct = int((yellow / total) * 100)
+                colors_line.append(f"{COLOR_EMOJI['ЖЕЛТЫЙ']} {yellow} ({yellow_pct}%)")
+            if purple > 0:
+                purple_pct = int((purple / total) * 100)
+                colors_line.append(f"{COLOR_EMOJI['ФИОЛЕТОВЫЙ']} {purple} ({purple_pct}%)")
             
-            result += " ".join(colors_to_show) + "\n"
-            result += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            if colors_line:
+                result += "• " + " | ".join(colors_line) + "\n"
+            
+            result += "\n"
+        
+        # Итоги по цветам
+        result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        total_green = sum(m["ЗЕЛЕНЫЙ"] for m in stats.values())
+        total_yellow = sum(m["ЖЕЛТЫЙ"] for m in stats.values())
+        total_purple = sum(m["ФИОЛЕТОВЫЙ"] for m in stats.values())
+        
+        result += f"🎨 <b>ИТОГО ПО ЦВЕТАМ:</b>\n"
+        
+        if total_green > 0:
+            green_pct = int((total_green / total_calls) * 100)
+            result += f"{COLOR_EMOJI['ЗЕЛЕНЫЙ']} Зелёные: {total_green} ({green_pct}%)\n"
+        
+        if total_yellow > 0:
+            yellow_pct = int((total_yellow / total_calls) * 100)
+            result += f"{COLOR_EMOJI['ЖЕЛТЫЙ']} Жёлтые: {total_yellow} ({yellow_pct}%)\n"
+        
+        if total_purple > 0:
+            purple_pct = int((total_purple / total_calls) * 100)
+            result += f"{COLOR_EMOJI['ФИОЛЕТОВЫЙ']} Фиолетовые: {total_purple} ({purple_pct}%)\n"
         
         return result
 
