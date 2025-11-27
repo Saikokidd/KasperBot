@@ -1,13 +1,5 @@
-"""
-ИСПРАВЛЕННЫЙ: services/google_sheets_service.py
-Сервис для работы с Google Sheets
-Автоматическое обновление статистики менеджеров
-
-ИЗМЕНЕНИЯ:
-✅ Убрана сортировка при обновлении данных
-✅ Менеджеры теперь всегда в фиксированном порядке (по алфавиту)
-✅ История предыдущих дней сохраняется корректно
-"""
+"""Сервис для работы с Google Sheets
+Автоматическое обновление статистики менеджеров"""
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -19,6 +11,28 @@ from gspread.exceptions import WorksheetNotFound, APIError
 
 from utils.logger import logger
 from config.settings import settings
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+import logging
+from gspread.exceptions import APIError
+import aiohttp
+
+# Настройка retry для API запросов
+API_RETRY_CONFIG = {
+    'stop': stop_after_attempt(3),                    # Максимум 3 попытки
+    'wait': wait_exponential(min=2, max=10),          # 2с, 4с, 8с
+    'retry': retry_if_exception_type((
+        APIError,                                      # Google Sheets API ошибки
+        aiohttp.ClientError,                          # Сетевые ошибки
+        TimeoutError                                   # Таймауты
+    )),
+    'before_sleep': before_sleep_log(logger, logging.WARNING)  # Логируем перед повтором
+}
 
 # Загрузка .env файла
 load_dotenv()
@@ -204,9 +218,10 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка создания листа: {e}")
             return None
     
+    @retry(**API_RETRY_CONFIG)
     async def _get_managers_stats(self, target_date: str) -> List[Dict]:
         """
-        Получить статистику по всем менеджерам
+        Получить статистику по всем менеджерам С АВТОПОВТОРОМ
         
         Args:
             target_date: Дата в формате YYYY-MM-DD (не используется)
@@ -215,7 +230,7 @@ class GoogleSheetsService:
             Список менеджеров с данными (в алфавитном порядке)
         """
         try:
-            # ✅ ФИКСИРОВАННЫЙ СПИСОК - ТОЛЬКО ПАВЛОГРАД (в алфавитном порядке!)
+            # ✅ ФИКСИРОВАННЫЙ СПИСОК - ТОЛЬКО ПАВЛОГРАД
             FIXED_MANAGERS = [
                 "Алладин", "Аня", "Ваня", "Вова", "Ганжа", "Диана", 
                 "Диди", "Дима", "Добряк", "Дрон", "Егор", "Женя",
@@ -323,6 +338,7 @@ class GoogleSheetsService:
             
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики менеджеров: {e}")
+            raise  # ✅ Пробрасываем для retry
             import traceback
             logger.error(traceback.format_exc())
             
@@ -338,16 +354,16 @@ class GoogleSheetsService:
                 for name in FIXED_MANAGERS
             ]
     
+    @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
         """
-        Обновить статистику в Google Sheets
+        Обновить статистику в Google Sheets С АВТОПОВТОРОМ
         Запускается каждый час (8:00-19:00, ПН-СБ)
         
-        ✅ ИСПРАВЛЕНО: Убрана сортировка - менеджеры всегда в алфавитном порядке
+        ✅ ДОБАВЛЕНО: Retry при сбоях сети/API
         """
         if not self.client or not self.spreadsheet:
-            logger.error("❌ Google Sheets сервис не инициализирован")
-            return
+            raise Exception("Google Sheets сервис не инициализирован")
         
         try:
             now = datetime.now(self.timezone)
@@ -362,7 +378,7 @@ class GoogleSheetsService:
             except WorksheetNotFound:
                 worksheet = await self._create_weekly_sheet()
                 if not worksheet:
-                    return
+                    raise Exception("Не удалось создать лист")
             
             # Получение статистики менеджеров за текущий день
             current_date = now.strftime("%Y-%m-%d")
@@ -371,11 +387,10 @@ class GoogleSheetsService:
             if not managers_data:
                 logger.warning("⚠️ Нет данных для обновления")
                 return
-            
-            # ✅ УБРАНА СОРТИРОВКА - менеджеры уже в алфавитном порядке
+        
             logger.info(f"📋 Менеджеры в фиксированном порядке (алфавит)")
             
-            # ===== ОПРЕДЕЛЕНИЕ ДНЯ НЕДЕЛИ =====
+            # Определение дня недели
             weekday = now.weekday()
             days_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
             
@@ -386,7 +401,7 @@ class GoogleSheetsService:
                 logger.info("📅 Воскресенье - обновление не требуется")
                 return
             
-            # Колонка для трубок: C=ПН, D=ВТ, E=СР, F=ЧТ, G=ПТ, H=СБ
+            # Колонка для трубок
             tubes_col = 3 + weekday
             tubes_col_letter = chr(64 + tubes_col)
             
@@ -410,7 +425,7 @@ class GoogleSheetsService:
             
             updates = []
             
-            # 1. Номера и имена менеджеров (колонки A-B)
+            # 1. Номера и имена менеджеров
             names_range_values = []
             for idx, data in enumerate(rows_data, start=1):
                 names_range_values.append([idx, data['name']])
@@ -420,7 +435,7 @@ class GoogleSheetsService:
                 'values': names_range_values
             })
             
-            # 2. Трубки за текущий день (одна колонка)
+            # 2. Трубки за текущий день
             tubes_values = [[data['tubes']] for data in rows_data]
             updates.append({
                 'range': f'{tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}',
@@ -429,7 +444,7 @@ class GoogleSheetsService:
             
             logger.info(f"📝 Запись данных в колонку {tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}")
             
-            # 3. Формулы для "Итого трубок" (колонка I)
+            # 3. Формулы для "Итого трубок"
             formulas_total = [
                 [f"=SUM(C{data['row']}:H{data['row']})"] 
                 for data in rows_data
@@ -509,6 +524,7 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка обновления статистики: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            raise  # ✅ Пробрасываем ошибку для retry
     
     async def create_weekly_sheet_if_needed(self):
         """

@@ -1,17 +1,17 @@
 """
-ФИНАЛЬНАЯ ВЕРСИЯ: services/scheduler_service.py
-С уведомлениями админу при критических ошибках
+ИСПРАВЛЕННЫЙ ФАЙЛ: services/scheduler_service.py
+Планировщик задач для автоматического обновления Google Sheets
+
+ИЗМЕНЕНИЯ:
+✅ Заменен _run_async_task на использование asyncio.run() (более эффективно)
 """
 import asyncio
 from datetime import datetime
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from telegram import Bot
 
 from utils.logger import logger
-from utils.notifications import notification_service
-from config.settings import settings
 
 
 class SchedulerService:
@@ -25,38 +25,24 @@ class SchedulerService:
         self._last_update_success = None
         self._update_count = 0
         self._error_count = 0
-        self._consecutive_errors = 0  # ✅ НОВОЕ: Счётчик ошибок подряд
-        self._bot = None  # ✅ НОВОЕ: Экземпляр бота для уведомлений
-    
-    def set_bot(self, bot: Bot):
-        """
-        Установить экземпляр бота для отправки уведомлений
-        
-        Args:
-            bot: Экземпляр Telegram бота
-        """
-        self._bot = bot
-        logger.info("✅ Бот установлен для отправки уведомлений")
     
     def _run_async_task(self, coro):
-        """Запустить асинхронную задачу в синхронном контексте"""
-        loop = None
+        """
+        Запустить асинхронную задачу в синхронном контексте
+        
+        ✅ ИСПРАВЛЕНО: Используется asyncio.run() вместо создания нового event loop
+        
+        Args:
+            coro: Корутина для запуска
+        """
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(coro)
+            asyncio.run(coro)
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения задачи: {e}")
             raise
-        finally:
-            if loop is not None:
-                try:
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"⚠️ Ошибка закрытия event loop: {e}")
     
     def _update_stats_job(self):
-        """Задача обновления статистики С УВЕДОМЛЕНИЯМИ"""
+        """Задача обновления статистики"""
         try:
             from services.google_sheets_service import google_sheets_service
             
@@ -67,26 +53,12 @@ class SchedulerService:
             if not google_sheets_service.client or not google_sheets_service.spreadsheet:
                 logger.error("❌ Google Sheets сервис не инициализирован!")
                 self._error_count += 1
-                self._consecutive_errors += 1
-                
-                # ✅ Уведомление если 3 ошибки подряд
-                if self._consecutive_errors >= 3 and self._bot:
-                    self._send_critical_notification(
-                        "Google Sheets не инициализирован",
-                        f"{self._consecutive_errors} ошибок подряд при инициализации"
-                    )
                 return
             
-            # Выполнение обновления (с retry внутри)
+            # Выполнение обновления
             self._run_async_task(google_sheets_service.update_stats())
             
-            # ✅ УСПЕХ - Обнуляем счётчики
-            if self._consecutive_errors >= 3:
-                # Было много ошибок, но теперь восстановились - уведомляем
-                if self._bot:
-                    self._send_recovery_notification("Google Sheets обновление")
-            
-            self._consecutive_errors = 0  # Сброс счётчика
+            # Обновление статистики успеха
             self._last_update_success = now
             self._update_count += 1
             
@@ -94,29 +66,12 @@ class SchedulerService:
             
         except Exception as e:
             self._error_count += 1
-            self._consecutive_errors += 1
+            logger.error(f"❌ Ошибка задачи обновления статистики: {e}")
+            logger.error(f"⚠️ Всего ошибок: {self._error_count}")
             
-            error_msg = str(e)
-            logger.error(f"❌ Ошибка задачи обновления статистики: {error_msg}")
-            logger.error(f"⚠️ Ошибок подряд: {self._consecutive_errors}, всего: {self._error_count}")
-            
-            # ✅ УВЕДОМЛЕНИЕ после 3 ошибок подряд
-            if self._consecutive_errors >= 3 and self._bot:
-                additional_info = (
-                    f"• Всего обновлений: {self._update_count}\n"
-                    f"• Всего ошибок: {self._error_count}\n"
-                    f"• Ошибок подряд: {self._consecutive_errors}"
-                )
-                
-                self._send_critical_notification(
-                    "Google Sheets обновление",
-                    error_msg,
-                    additional_info
-                )
-            
-            # Предупреждение в логах
-            if self._consecutive_errors >= 5:
-                logger.warning(f"⚠️ КРИТИЧНО: {self._consecutive_errors} ошибок обновления подряд!")
+            # Если слишком много ошибок подряд - уведомление
+            if self._error_count >= 3:
+                logger.warning(f"⚠️ ВНИМАНИЕ: {self._error_count} ошибок обновления подряд!")
     
     def _create_weekly_sheet_job(self):
         """Задача создания нового листа"""
@@ -128,12 +83,6 @@ class SchedulerService:
             
             if not google_sheets_service.client or not google_sheets_service.spreadsheet:
                 logger.error("❌ Google Sheets сервис не инициализирован!")
-                
-                if self._bot:
-                    self._send_critical_notification(
-                        "Создание листа недели",
-                        "Google Sheets сервис не инициализирован"
-                    )
                 return
             
             self._run_async_task(google_sheets_service.create_weekly_sheet_if_needed())
@@ -142,12 +91,6 @@ class SchedulerService:
             
         except Exception as e:
             logger.error(f"❌ Ошибка задачи создания листа: {e}")
-            
-            if self._bot:
-                self._send_critical_notification(
-                    "Создание листа недели",
-                    str(e)
-                )
     
     def _reset_sips_job(self):
         """Задача сброса SIP (каждое утро в 8:00)"""
@@ -157,58 +100,12 @@ class SchedulerService:
             now = datetime.now(self.timezone)
             logger.info(f"⏰ Запуск сброса SIP ({now.strftime('%Y-%m-%d %H:%M')})")
             
-            affected = db.reset_all_sips()
+            db.reset_all_sips()
             
-            if affected > 0:
-                logger.info(f"✅ Сброшено {affected} SIP менеджеров")
-            else:
-                logger.info("ℹ️ SIP уже были сброшены ранее")
+            logger.info("✅ SIP всех менеджеров сброшены")
             
         except Exception as e:
             logger.error(f"❌ Ошибка задачи сброса SIP: {e}")
-            
-            if self._bot:
-                self._send_critical_notification(
-                    "Сброс SIP менеджеров",
-                    str(e)
-                )
-    
-    def _send_critical_notification(
-        self,
-        error_type: str,
-        error_msg: str,
-        additional_info: str = None
-    ):
-        """Отправить критическое уведомление админу"""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                notification_service.notify_critical_error(
-                    bot=self._bot,
-                    error_type=error_type,
-                    details=error_msg,
-                    additional_info=additional_info
-                )
-            )
-            loop.close()
-        except Exception as e:
-            logger.error(f"❌ Не удалось отправить уведомление: {e}")
-    
-    def _send_recovery_notification(self, service_name: str):
-        """Отправить уведомление о восстановлении"""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                notification_service.notify_recovery(
-                    bot=self._bot,
-                    service_name=service_name
-                )
-            )
-            loop.close()
-        except Exception as e:
-            logger.error(f"❌ Не удалось отправить уведомление о восстановлении: {e}")
     
     def add_jobs(self):
         """Добавить задачи в планировщик"""
@@ -218,27 +115,29 @@ class SchedulerService:
         
         try:
             # ===== ЗАДАЧА 1: Обновление статистики =====
+            # Каждый час с 8:00 до 19:00, ПН-СБ
             self.scheduler.add_job(
                 func=self._update_stats_job,
                 trigger=CronTrigger(
-                    day_of_week='mon-sat',
-                    hour='8-19',
-                    minute=0,
+                    day_of_week='mon-sat',  # Понедельник-Суббота
+                    hour='8-19',            # С 8 утра до 19 вечера
+                    minute=0,               # В начале часа
                     timezone=self.timezone
                 ),
                 id='update_stats',
                 name='Обновление статистики в Google Sheets',
                 replace_existing=True,
-                max_instances=1
+                max_instances=1  # Не запускать новую задачу, если предыдущая ещё работает
             )
             
             # ===== ЗАДАЧА 2: Создание нового листа =====
+            # Каждый понедельник в 00:01
             self.scheduler.add_job(
                 func=self._create_weekly_sheet_job,
                 trigger=CronTrigger(
-                    day_of_week='mon',
-                    hour=0,
-                    minute=1,
+                    day_of_week='mon',      # Понедельник
+                    hour=0,                 # 00 часов
+                    minute=1,               # 01 минута
                     timezone=self.timezone
                 ),
                 id='create_weekly_sheet',
@@ -248,11 +147,12 @@ class SchedulerService:
             )
             
             # ===== ЗАДАЧА 3: Сброс SIP =====
+            # Каждое утро в 8:00 (ПН-СБ)
             self.scheduler.add_job(
                 func=self._reset_sips_job,
                 trigger=CronTrigger(
-                    day_of_week='mon-sat',
-                    hour=8,
+                    day_of_week='mon-sat',  # Понедельник-Суббота
+                    hour=8,                 # 8 утра
                     minute=0,
                     timezone=self.timezone
                 ),
@@ -265,7 +165,8 @@ class SchedulerService:
             self._jobs_added = True
             logger.info("✅ Задачи добавлены в планировщик")
             logger.info("✅ Задача сброса SIP добавлена (8:00, ПН-СБ)")
-        
+            
+            # Вывод информации о задачах
             self._print_jobs_info()
             
         except Exception as e:
@@ -298,7 +199,6 @@ class SchedulerService:
                 logger.info("📊 Статистика будет обновляться каждый час (8:00-19:00, ПН-СБ)")
                 logger.info("📋 Новый лист будет создаваться каждый понедельник в 00:01")
                 logger.info("🔄 SIP будут сбрасываться каждое утро в 8:00 (ПН-СБ)")
-                logger.info("📨 Критические ошибки будут отправляться админам")
             else:
                 logger.warning("⚠️ Планировщик уже запущен")
             
@@ -311,11 +211,12 @@ class SchedulerService:
             if self.scheduler.running:
                 self.scheduler.shutdown()
                 logger.info("⏹️ Планировщик задач остановлен")
-            
+                
+                # Вывод финальной статистики
                 if self._update_count > 0:
                     logger.info(f"📊 Статистика работы:")
                     logger.info(f"  ✅ Успешных обновлений: {self._update_count}")
-                    logger.info(f"  ❌ Всего ошибок: {self._error_count}")
+                    logger.info(f"  ❌ Ошибок: {self._error_count}")
                     if self._last_update_success:
                         logger.info(f"  ⏰ Последнее обновление: {self._last_update_success.strftime('%Y-%m-%d %H:%M')}")
         except Exception as e:
@@ -327,18 +228,30 @@ class SchedulerService:
         self._update_stats_job()
     
     def get_stats(self) -> dict:
-        """Получить статистику работы планировщика"""
+        """
+        Получить статистику работы планировщика
+        
+        Returns:
+            Словарь со статистикой
+        """
         return {
             'running': self.scheduler.running,
             'update_count': self._update_count,
             'error_count': self._error_count,
-            'consecutive_errors': self._consecutive_errors,
             'last_update': self._last_update_success.strftime('%Y-%m-%d %H:%M') if self._last_update_success else None,
             'jobs_count': len(self.scheduler.get_jobs()) if self.scheduler else 0
         }
     
     def get_next_run_time(self, job_id: str) -> str:
-        """Получить время следующего запуска задачи"""
+        """
+        Получить время следующего запуска задачи
+        
+        Args:
+            job_id: ID задачи ('update_stats' или 'create_weekly_sheet')
+            
+        Returns:
+            Строка с временем или None
+        """
         try:
             job = self.scheduler.get_job(job_id)
             if job and hasattr(job, 'next_run_time') and job.next_run_time:
@@ -350,3 +263,5 @@ class SchedulerService:
 
 # Глобальный экземпляр планировщика
 scheduler_service = SchedulerService()
+
+# НЕ запускаем автоматически - запуск только через main.py

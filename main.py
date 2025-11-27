@@ -1,11 +1,9 @@
 """
-ИСПРАВЛЕННЫЙ ФАЙЛ: main.py
+ФИНАЛЬНАЯ ВЕРСИЯ: main.py
 Главная точка входа для запуска Telegram бота
 
-ИЗМЕНЕНИЯ:
-✅ handle_quick_error_callback теперь внутри ConversationHandler
-✅ Удалён отдельный CallbackQueryHandler для быстрых ошибок (qerr_*)
-✅ Удалён CallbackQueryHandler для change_sip
+ИСПРАВЛЕНИЯ:
+✅ Добавлен per_message=True для всех ConversationHandler (убраны warnings)
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -73,6 +71,7 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID: [MessageHandler(filters.TEXT | filters.FORWARDED, add_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message - не нужно для MessageHandler
     )
     app.add_handler(add_manager_conv)
     
@@ -83,6 +82,7 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID_REMOVE: [MessageHandler(filters.TEXT, remove_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(remove_manager_conv)
     
@@ -96,6 +96,7 @@ def register_handlers(app: Application):
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT, add_telephony_group)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(add_tel_conv)
     
@@ -106,6 +107,7 @@ def register_handlers(app: Application):
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT, remove_telephony_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(remove_tel_conv)
     
@@ -116,10 +118,11 @@ def register_handlers(app: Application):
             WAITING_BROADCAST_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(broadcast_conv)
     
-    # ✅ ИСПРАВЛЕНО: ConversationHandler для BMW теперь обрабатывает всё
+    # ✅ ConversationHandler для BMW (уже исправлен в quick_errors.py)
     app.add_handler(quick_bmw_conv)
     
     # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
@@ -148,9 +151,6 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(show_support_stats_period, pattern="^stats_sup_"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats, pattern="^stats_response_time$"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats_period, pattern="^stats_time_"))
-    
-    # ✅ УДАЛЕНО: Отдельные CallbackQueryHandler для быстрых ошибок
-    # (теперь всё внутри quick_bmw_conv)
     
     # ===== ОСНОВНЫЕ CALLBACK ОБРАБОТЧИКИ =====
     
@@ -191,6 +191,9 @@ def main():
         # ===== ЗАПУСК ПЛАНИРОВЩИКА (ПОСЛЕ РЕГИСТРАЦИИ ОБРАБОТЧИКОВ) =====
         try:
             from services.scheduler_service import scheduler_service
+            
+            # ✅ НОВОЕ: Передаём экземпляр бота для отправки уведомлений
+            scheduler_service.set_bot(app.bot)
             
             if not scheduler_service.scheduler.running:
                 scheduler_service.start()

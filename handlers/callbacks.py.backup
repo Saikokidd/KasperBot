@@ -1,15 +1,9 @@
 """
-ФИНАЛЬНАЯ ВЕРСИЯ: handlers/callbacks.py
 Обработчики callback запросов (inline кнопки)
-
-ИСПРАВЛЕНИЯ:
-✅ Добавлен closing() для безопасного закрытия соединений БД
-✅ Улучшена обработка ошибок
 """
 from datetime import datetime
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
-from contextlib import closing
 
 from config.settings import settings
 from config.constants import TEL_CODES_REVERSE, SUPPORT_ACTIONS, TEL_CHOICE_TIMEOUT
@@ -129,8 +123,6 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик нажатий на кнопки саппорта в группе (только для белых телефоний)
     
-    ✅ ИСПРАВЛЕНО: Добавлен closing() для безопасного закрытия соединений
-    
     Args:
         update: Update объект
         context: Контекст пользователя
@@ -159,62 +151,61 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ===== СОХРАНЕНИЕ В БД ДЛЯ АНАЛИТИКИ =====
         try:
-            # ✅ ИСПРАВЛЕНО: Используем closing() для автоматического закрытия
-            with closing(db._get_connection()) as conn:
-                cursor = conn.cursor()
+            conn = db._get_connection()
+            cursor = conn.cursor()
+            
+            # Находим последнюю необработанную ошибку от этого пользователя
+            cursor.execute(
+                """
+                SELECT id, created_at FROM error_reports 
+                WHERE user_id = ? AND telephony_code = ? AND status = 'new'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (user_id, tel_code)
+            )
+            
+            error_record = cursor.fetchone()
+            
+            if error_record:
+                error_id = error_record[0]
+                created_at_str = error_record[1]
                 
-                # Находим последнюю необработанную ошибку от этого пользователя
+                # Парсим время создания
+                try:
+                    # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
+                    resolved_at = datetime.now()
+                    response_time = int((resolved_at - created_at).total_seconds())
+                except Exception as e:
+                    logger.error(f"Ошибка парсинга времени: {e}")
+                    response_time = None
+                    resolved_at = datetime.now()
+                
+                # Обновляем запись
                 cursor.execute(
                     """
-                    SELECT id, created_at FROM error_reports 
-                    WHERE user_id = ? AND telephony_code = ? AND status = 'new'
-                    ORDER BY created_at DESC LIMIT 1
+                    UPDATE error_reports 
+                    SET status = 'resolved', 
+                        resolved_at = ?,
+                        support_user_id = ?,
+                        support_username = ?,
+                        support_action = ?,
+                        response_time_seconds = ?
+                    WHERE id = ?
                     """,
-                    (user_id, tel_code)
+                    (resolved_at.strftime("%Y-%m-%d %H:%M:%S"), support_user_id, support_username, 
+                     action_code, response_time, error_id)
                 )
                 
-                error_record = cursor.fetchone()
+                conn.commit()
                 
-                if error_record:
-                    error_id = error_record[0]
-                    created_at_str = error_record[1]
-                    
-                    # Парсим время создания
-                    try:
-                        # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
-                        created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
-                        resolved_at = datetime.now()
-                        response_time = int((resolved_at - created_at).total_seconds())
-                    except Exception as e:
-                        logger.error(f"Ошибка парсинга времени: {e}")
-                        response_time = None
-                        resolved_at = datetime.now()
-                    
-                    # Обновляем запись
-                    cursor.execute(
-                        """
-                        UPDATE error_reports 
-                        SET status = 'resolved', 
-                            resolved_at = ?,
-                            support_user_id = ?,
-                            support_username = ?,
-                            support_action = ?,
-                            response_time_seconds = ?
-                        WHERE id = ?
-                        """,
-                        (resolved_at.strftime("%Y-%m-%d %H:%M:%S"), support_user_id, support_username, 
-                         action_code, response_time, error_id)
-                    )
-                    
-                    conn.commit()
-                    
-                    minutes = response_time // 60 if response_time else 0
-                    seconds = response_time % 60 if response_time else 0
-                    logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
-                else:
-                    logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
-                
-                # ✅ Соединение автоматически закроется благодаря closing()
+                minutes = response_time // 60 if response_time else 0
+                seconds = response_time % 60 if response_time else 0
+                logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
+            else:
+                logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
+            
+            conn.close()
             
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
