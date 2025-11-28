@@ -1,12 +1,10 @@
---- ./main.py ---
+=== ./main.py ===
 """
-ИСПРАВЛЕННЫЙ ФАЙЛ: main.py
+ФИНАЛЬНАЯ ВЕРСИЯ: main.py
 Главная точка входа для запуска Telegram бота
 
-ИЗМЕНЕНИЯ:
-✅ handle_quick_error_callback теперь внутри ConversationHandler
-✅ Удалён отдельный CallbackQueryHandler для быстрых ошибок (qerr_*)
-✅ Удалён CallbackQueryHandler для change_sip
+ИСПРАВЛЕНИЯ:
+✅ Добавлен per_message=True для всех ConversationHandler (убраны warnings)
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -74,6 +72,7 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID: [MessageHandler(filters.TEXT | filters.FORWARDED, add_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message - не нужно для MessageHandler
     )
     app.add_handler(add_manager_conv)
     
@@ -84,6 +83,7 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID_REMOVE: [MessageHandler(filters.TEXT, remove_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(remove_manager_conv)
     
@@ -97,6 +97,7 @@ def register_handlers(app: Application):
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT, add_telephony_group)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(add_tel_conv)
     
@@ -107,6 +108,7 @@ def register_handlers(app: Application):
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT, remove_telephony_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(remove_tel_conv)
     
@@ -117,10 +119,11 @@ def register_handlers(app: Application):
             WAITING_BROADCAST_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
     app.add_handler(broadcast_conv)
     
-    # ✅ ИСПРАВЛЕНО: ConversationHandler для BMW теперь обрабатывает всё
+    # ✅ ConversationHandler для BMW (уже исправлен в quick_errors.py)
     app.add_handler(quick_bmw_conv)
     
     # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
@@ -149,9 +152,6 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(show_support_stats_period, pattern="^stats_sup_"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats, pattern="^stats_response_time$"))
     app.add_handler(CallbackQueryHandler(show_response_time_stats_period, pattern="^stats_time_"))
-    
-    # ✅ УДАЛЕНО: Отдельные CallbackQueryHandler для быстрых ошибок
-    # (теперь всё внутри quick_bmw_conv)
     
     # ===== ОСНОВНЫЕ CALLBACK ОБРАБОТЧИКИ =====
     
@@ -193,6 +193,9 @@ def main():
         try:
             from services.scheduler_service import scheduler_service
             
+            # ✅ НОВОЕ: Передаём экземпляр бота для отправки уведомлений
+            scheduler_service.set_bot(app.bot)
+            
             if not scheduler_service.scheduler.running:
                 scheduler_service.start()
                 logger.info("✅ Планировщик задач настроен")
@@ -223,8 +226,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()--- ./keyboards/__init__.py ---
---- ./keyboards/reply.py ---
+    main()
+=== ./keyboards/__init__.py ===
+
+=== ./keyboards/reply.py ===
 """
 Обновленная keyboards/reply.py - ПОЛНАЯ ВЕРСИЯ
 Добавлено меню выбора телефонии
@@ -300,7 +305,8 @@ def get_telephony_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[KeyboardButton(text) for text in row] for row in TELEPHONY_MENU],
         resize_keyboard=True
-    )--- ./keyboards/inline.py ---
+    )
+=== ./keyboards/inline.py ===
 """
 Inline клавиатуры (кнопки в сообщениях)
 """
@@ -443,8 +449,10 @@ def get_quick_errors_keyboard() -> InlineKeyboardMarkup:
         ]
     ]
     
-    return InlineKeyboardMarkup(buttons)--- ./config/__init__.py ---
---- ./config/constants.py ---
+    return InlineKeyboardMarkup(buttons)
+=== ./config/__init__.py ===
+
+=== ./config/constants.py ===
 """
 ИСПРАВЛЕННЫЙ ФАЙЛ: config/constants.py
 Добавлены константы для быстрых ошибок BMW
@@ -504,26 +512,26 @@ USEFUL_LINKS = {
 
 # ✅ НОВОЕ: Быстрые ошибки BMW
 QUICK_ERRORS = {
-    "1": "Занято",
+    "1": "Намбер бизи",
     "2": "Сервис недоступен",
     "3": "Вызов не может быть установлен",
     "4": "Баланс",
     "5": "Слетел регистр сим",
     "6": "Темпорали",
-    "7": "Нет гудков",
+    "7": "Занято",
     "8": "Нетворк",
     "9": "Ограничение связи",
     "10": "Свой вариант"
 }
 
 QUICK_ERROR_BUTTONS = {
-    "1": "1️⃣ Занято",
+    "1": "1️⃣ Намбер бизи",
     "2": "2️⃣ Сервис недоступен",
     "3": "3️⃣ Вызов не устан",
     "4": "4️⃣ Баланс",
     "5": "5️⃣ Слетел регистр сим",
     "6": "6️⃣ Темпорали",
-    "7": "7️⃣ Нет гудков",
+    "7": "7️⃣ Занято",
     "8": "8️⃣ Нетворк",
     "9": "9️⃣ Ограничение связи",
     "10": "🔟 Свой вариант"
@@ -557,7 +565,8 @@ SUPPORT_ACTIONS = {
     "wait": "⏱ Исправление через 2-3 мин",
     "wrong": "⚠️ Неверный формат",
     "sim": "✅ Сим ворк"
-}--- ./config/settings.py ---
+}
+=== ./config/settings.py ===
 """
 Конфигурация бота: загрузка переменных окружения и валидация
 """
@@ -660,8 +669,10 @@ class Settings:
 
 
 # Создаём глобальный экземпляр настроек
-settings = Settings()--- ./handlers/__init__.py ---
---- ./handlers/errors.py ---
+settings = Settings()
+=== ./handlers/__init__.py ===
+
+=== ./handlers/errors.py ===
 """
 Глобальный обработчик ошибок бота
 """
@@ -691,13 +702,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"❌ Ошибка при отправке сообщения об ошибке: {e}")
---- ./handlers/callbacks.py ---
+
+=== ./handlers/callbacks.py ===
 """
+ФИНАЛЬНАЯ ВЕРСИЯ: handlers/callbacks.py
 Обработчики callback запросов (inline кнопки)
+
+ИСПРАВЛЕНИЯ:
+✅ Добавлен closing() для безопасного закрытия соединений БД
+✅ Улучшена обработка ошибок
 """
 from datetime import datetime
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
+from contextlib import closing
 
 from config.settings import settings
 from config.constants import TEL_CODES_REVERSE, SUPPORT_ACTIONS, TEL_CHOICE_TIMEOUT
@@ -817,6 +835,8 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик нажатий на кнопки саппорта в группе (только для белых телефоний)
     
+    ✅ ИСПРАВЛЕНО: Добавлен closing() для безопасного закрытия соединений
+    
     Args:
         update: Update объект
         context: Контекст пользователя
@@ -845,61 +865,62 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ===== СОХРАНЕНИЕ В БД ДЛЯ АНАЛИТИКИ =====
         try:
-            conn = db._get_connection()
-            cursor = conn.cursor()
-            
-            # Находим последнюю необработанную ошибку от этого пользователя
-            cursor.execute(
-                """
-                SELECT id, created_at FROM error_reports 
-                WHERE user_id = ? AND telephony_code = ? AND status = 'new'
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (user_id, tel_code)
-            )
-            
-            error_record = cursor.fetchone()
-            
-            if error_record:
-                error_id = error_record[0]
-                created_at_str = error_record[1]
+            # ✅ ИСПРАВЛЕНО: Используем closing() для автоматического закрытия
+            with closing(db._get_connection()) as conn:
+                cursor = conn.cursor()
                 
-                # Парсим время создания
-                try:
-                    # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
-                    created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
-                    resolved_at = datetime.now()
-                    response_time = int((resolved_at - created_at).total_seconds())
-                except Exception as e:
-                    logger.error(f"Ошибка парсинга времени: {e}")
-                    response_time = None
-                    resolved_at = datetime.now()
-                
-                # Обновляем запись
+                # Находим последнюю необработанную ошибку от этого пользователя
                 cursor.execute(
                     """
-                    UPDATE error_reports 
-                    SET status = 'resolved', 
-                        resolved_at = ?,
-                        support_user_id = ?,
-                        support_username = ?,
-                        support_action = ?,
-                        response_time_seconds = ?
-                    WHERE id = ?
+                    SELECT id, created_at FROM error_reports 
+                    WHERE user_id = ? AND telephony_code = ? AND status = 'new'
+                    ORDER BY created_at DESC LIMIT 1
                     """,
-                    (resolved_at.strftime("%Y-%m-%d %H:%M:%S"), support_user_id, support_username, 
-                     action_code, response_time, error_id)
+                    (user_id, tel_code)
                 )
                 
-                conn.commit()
+                error_record = cursor.fetchone()
                 
-                minutes = response_time // 60 if response_time else 0
-                seconds = response_time % 60 if response_time else 0
-                logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
-            else:
-                logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
-            
-            conn.close()
+                if error_record:
+                    error_id = error_record[0]
+                    created_at_str = error_record[1]
+                    
+                    # Парсим время создания
+                    try:
+                        # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
+                        created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
+                        resolved_at = datetime.now()
+                        response_time = int((resolved_at - created_at).total_seconds())
+                    except Exception as e:
+                        logger.error(f"Ошибка парсинга времени: {e}")
+                        response_time = None
+                        resolved_at = datetime.now()
+                    
+                    # Обновляем запись
+                    cursor.execute(
+                        """
+                        UPDATE error_reports 
+                        SET status = 'resolved', 
+                            resolved_at = ?,
+                            support_user_id = ?,
+                            support_username = ?,
+                            support_action = ?,
+                            response_time_seconds = ?
+                        WHERE id = ?
+                        """,
+                        (resolved_at.strftime("%Y-%m-%d %H:%M:%S"), support_user_id, support_username, 
+                         action_code, response_time, error_id)
+                    )
+                    
+                    conn.commit()
+                    
+                    minutes = response_time // 60 if response_time else 0
+                    seconds = response_time % 60 if response_time else 0
+                    logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
+                else:
+                    logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
+                
+                # ✅ Соединение автоматически закроется благодаря closing()
             
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
@@ -975,16 +996,16 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(
         "⚠️ Неизвестная команда. Попробуйте снова.",
         reply_markup=current_menu
-    )--- ./handlers/quick_errors.py ---
+    )
+=== ./handlers/quick_errors.py ===
 """
-ИСПРАВЛЕННЫЙ ФАЙЛ: handlers/quick_errors.py
+ФИНАЛЬНАЯ ВЕРСИЯ: handlers/quick_errors.py
 Обработчики быстрых ошибок BMW с SIP
 
-ИЗМЕНЕНИЯ:
-✅ handle_quick_error_callback теперь возвращает состояния ConversationHandler
-✅ handle_custom_error_input интегрирован в ConversationHandler
-✅ Удалена проверка waiting_custom_bmw (состояние управляется ConversationHandler)
-✅ ConversationHandler обрабатывает callback от inline кнопок
+ИСПРАВЛЕНИЯ:
+✅ Убраны callback handlers из entry_points (они теперь в states)
+✅ Кнопки ошибок теперь работают только после выбора BMW
+✅ Улучшена обработка ошибок
 """
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
@@ -997,7 +1018,7 @@ from utils.state import get_user_role
 from utils.logger import logger
 
 # Состояния разговора
-WAITING_SIP, WAITING_CUSTOM_ERROR = range(2)
+WAITING_SIP, WAITING_CUSTOM_ERROR, SHOWING_ERRORS = range(3)
 
 
 async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1007,8 +1028,13 @@ async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Args:
         update: Update объект
         context: Контекст пользователя
+    
+    Returns:
+        SHOWING_ERRORS если SIP указан, WAITING_SIP если нет
     """
     user_id = update.effective_user.id
+    
+    logger.info(f"🔵 BMW выбран user_id={user_id}")
     
     # Проверяем, указан ли SIP сегодня
     if db.is_sip_valid_today(user_id):
@@ -1016,13 +1042,20 @@ async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sip_data = db.get_manager_sip(user_id)
         sip = sip_data['sip_number']
         
+        logger.info(f"✅ SIP уже указан сегодня: {sip}")
+        
+        # Сохраняем SIP в контексте для дальнейшего использования
+        context.user_data["bmw_sip"] = sip
+        
         await update.message.reply_text(
             MESSAGES["choose_quick_error"].format(sip=sip),
             reply_markup=get_quick_errors_keyboard()
         )
-        return ConversationHandler.END
+        return SHOWING_ERRORS  # ✅ ПЕРЕХОД В СОСТОЯНИЕ ПОКАЗА КНОПОК
     else:
         # SIP не указан - просим ввести
+        logger.info(f"⚠️ SIP не указан, запрашиваем у user_id={user_id}")
+        
         await update.message.reply_text(MESSAGES["sip_prompt"])
         return WAITING_SIP
 
@@ -1034,16 +1067,23 @@ async def handle_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Args:
         update: Update объект
         context: Контекст пользователя
+    
+    Returns:
+        WAITING_SIP при ошибке, SHOWING_ERRORS при успехе
     """
     user_id = update.effective_user.id
     sip_text = update.message.text.strip()
     
+    logger.info(f"📞 Введён SIP от user_id={user_id}: {sip_text}")
+    
+    # Валидация SIP
     if not sip_text or len(sip_text) > MAX_SIP_LENGTH:
         await update.message.reply_text(MESSAGES["sip_invalid"])
         return WAITING_SIP
     
-    # Сохраняем SIP
+    # Сохраняем SIP в БД и контексте
     db.save_manager_sip(user_id, sip_text)
+    context.user_data["bmw_sip"] = sip_text
     
     logger.info(f"✅ SIP сохранён для user_id={user_id}: {sip_text}")
     
@@ -1053,12 +1093,12 @@ async def handle_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_quick_errors_keyboard()
     )
     
-    return ConversationHandler.END
+    return SHOWING_ERRORS  # ✅ ПЕРЕХОД К ВЫБОРУ ОШИБКИ
 
 
 async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Обработчик нажатия на кнопку быстрой ошибки
+    Обработчик нажатия на кнопку быстрой ошибки (1-9 или 10)
     
     Args:
         update: Update объект
@@ -1076,25 +1116,30 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
     # Получаем код ошибки (qerr_1 → 1)
     error_code = query.data.split("_")[1]
     
-    # Проверяем наличие SIP
-    sip_data = db.get_manager_sip(user_id)
-    if not sip_data or not sip_data.get('sip_number'):
+    logger.info(f"🔘 Нажата кнопка ошибки {error_code} от user_id={user_id}")
+    
+    # Получаем SIP из контекста
+    sip = context.user_data.get("bmw_sip")
+    
+    if not sip:
+        logger.error(f"❌ SIP не найден в контексте для user_id={user_id}")
         await query.message.edit_text(
-            "⚠️ SIP не найден или некорректен.\n"
+            "⚠️ Ошибка: SIP не найден.\n"
             "Попробуйте снова через меню 'Ошибки телефонии' → 'BMW'"
         )
         return ConversationHandler.END
     
-    sip = sip_data['sip_number']
-    
     # Если "Свой вариант" - переходим к вводу текста
     if error_code == "10":
+        logger.info(f"✏️ Выбран свой вариант, ожидаем текст от user_id={user_id}")
+        
         await query.message.edit_text(MESSAGES["custom_error_prompt"])
-        context.user_data["bmw_sip"] = sip
-        return WAITING_CUSTOM_ERROR  # ✅ ПЕРЕХОД В СОСТОЯНИЕ ОЖИДАНИЯ
+        return WAITING_CUSTOM_ERROR  # ✅ ПЕРЕХОД В СОСТОЯНИЕ ОЖИДАНИЯ ТЕКСТА
     
     # Получаем текст ошибки
     error_text = QUICK_ERRORS.get(error_code, "Неизвестная ошибка")
+    
+    logger.info(f"📤 Отправка быстрой ошибки: {error_text}")
     
     # Отправляем в группу BMW
     success = await send_quick_error_to_group(
@@ -1110,6 +1155,9 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
         MESSAGES["quick_error_sent"].format(sip=sip, error=error_text)
     )
     
+    # Очищаем контекст
+    context.user_data.pop("bmw_sip", None)
+    
     return ConversationHandler.END
 
 
@@ -1122,7 +1170,7 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
         context: Контекст пользователя
     
     Returns:
-        ConversationHandler.END после обработки
+        WAITING_CUSTOM_ERROR при ошибке валидации, ConversationHandler.END при успехе
     """
     user_id = update.effective_user.id
     username = update.effective_user.first_name or "Пользователь"
@@ -1130,37 +1178,44 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
     error_text = update.message.text.strip()
     sip = context.user_data.get("bmw_sip")
     
-    try:
-        if not sip:
-            await update.message.reply_text("⚠️ Ошибка: SIP не найден.")
-            return ConversationHandler.END
-        
-        if not error_text or len(error_text) > MAX_CUSTOM_ERROR_LENGTH:
-            await update.message.reply_text(
-                f"⚠️ Описание ошибки должно быть от 1 до {MAX_CUSTOM_ERROR_LENGTH} символов."
-            )
-            return WAITING_CUSTOM_ERROR  # Остаёмся в состоянии ожидания
-        
-        # Отправляем в группу
-        success = await send_quick_error_to_group(
-            context.bot, user_id, username, sip, error_text
-        )
-        
-        if not success:
-            await update.message.reply_text("⚠️ Не удалось отправить ошибку. Попробуйте позже.")
-            return ConversationHandler.END
-        
-        # Уведомляем пользователя
-        await update.message.reply_text(
-            MESSAGES["quick_error_sent"].format(sip=sip, error=error_text)
-        )
-        
-        return ConversationHandler.END
-        
-    finally:
-        # Очистка состояния в любом случае
+    logger.info(f"✏️ Custom ошибка от user_id={user_id}: {error_text[:50]}...")
+    
+    if not sip:
+        await update.message.reply_text("⚠️ Ошибка: SIP не найден.")
         context.user_data.pop("bmw_sip", None)
-        logger.debug(f"🧹 Состояние custom BMW очищено для user_id={user_id}")
+        return ConversationHandler.END
+    
+    # Валидация
+    if not error_text or len(error_text) > MAX_CUSTOM_ERROR_LENGTH:
+        await update.message.reply_text(
+            f"⚠️ Описание ошибки должно быть от 1 до {MAX_CUSTOM_ERROR_LENGTH} символов.\n"
+            f"Сейчас: {len(error_text)} символов"
+        )
+        return WAITING_CUSTOM_ERROR  # Остаёмся в состоянии ожидания
+    
+    # Отправляем в группу
+    success = await send_quick_error_to_group(
+        context.bot, user_id, username, sip, error_text
+    )
+    
+    if not success:
+        await update.message.reply_text("⚠️ Не удалось отправить ошибку. Попробуйте позже.")
+        context.user_data.pop("bmw_sip", None)
+        return ConversationHandler.END
+    
+    # Уведомляем пользователя
+    role = get_user_role(context)
+    current_menu = get_menu_by_role(role)
+    
+    await update.message.reply_text(
+        MESSAGES["quick_error_sent"].format(sip=sip, error=error_text),
+        reply_markup=current_menu
+    )
+    
+    # Очищаем контекст
+    context.user_data.pop("bmw_sip", None)
+    
+    return ConversationHandler.END
 
 
 async def handle_change_sip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1176,6 +1231,9 @@ async def handle_change_sip_callback(update: Update, context: ContextTypes.DEFAU
     """
     query = update.callback_query
     await query.answer()
+    
+    user_id = update.effective_user.id
+    logger.info(f"⚙️ Запрос на изменение SIP от user_id={user_id}")
     
     await query.message.edit_text(MESSAGES["sip_prompt"])
     
@@ -1224,29 +1282,36 @@ async def send_quick_error_to_group(bot, user_id: int, username: str, sip: str, 
         return False
 
 
-# ✅ ИСПРАВЛЕНО: ConversationHandler с поддержкой callback для быстрых ошибок
+# ✅ ФИНАЛЬНЫЙ ConversationHandler (БЕЗ per_message)
 quick_bmw_conv = ConversationHandler(
     entry_points=[
-        MessageHandler(filters.Regex("^BMW$") & filters.ChatType.PRIVATE, handle_bmw_choice),
-        # ✅ ДОБАВЛЕНО: Callback от inline кнопок быстрых ошибок
-        CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
-        CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$")
+        # Только текстовое сообщение "BMW" запускает conversation
+        MessageHandler(filters.Regex("^BMW$") & filters.ChatType.PRIVATE, handle_bmw_choice)
     ],
     states={
         WAITING_SIP: [
+            # Ожидание текста SIP
             MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_sip_input),
-            CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$")
+        ],
+        SHOWING_ERRORS: [
+            # ✅ CALLBACK КНОПОК РАБОТАЮТ ТОЛЬКО В ЭТОМ СОСТОЯНИИ
+            CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
+            CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$"),
         ],
         WAITING_CUSTOM_ERROR: [
+            # Ожидание текста custom ошибки
             MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_custom_error_input)
         ]
     },
-    fallbacks=[],
+    fallbacks=[
+        # Можно добавить /cancel если нужно
+    ],
     allow_reentry=True,
-    per_message=False,
+    # ✅ УБРАНО per_message - не нужно для MessageHandler
     per_chat=True,
     per_user=True
-)--- ./handlers/commands.py ---
+)
+=== ./handlers/commands.py ===
 """
 Обработчики команд бота
 """
@@ -1329,7 +1394,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👋 Привет, {first_name}!\n\n"
             f"Выберите действие из меню:",
             reply_markup=get_manager_menu()
-        )--- ./handlers/messages.py ---
+        )
+=== ./handlers/messages.py ===
 """
 Обновленная handlers/messages.py - ПОЛНАЯ ВЕРСИЯ
 Добавлена поддержка выбора телефонии через Reply кнопки
@@ -1549,7 +1615,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_menu_button(update, context)
     else:
         # Иначе - это описание ошибки
-        await handle_error_message(update, context)--- ./handlers/management.py ---
+        await handle_error_message(update, context)
+=== ./handlers/management.py ===
 """
 Обработчики управления ботом (для админов)
 """
@@ -2022,7 +2089,8 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('broadcast_message_id', None)
     context.user_data.pop('broadcast_chat_id', None)
     
-    return ConversationHandler.END--- ./handlers/menu.py ---
+    return ConversationHandler.END
+=== ./handlers/menu.py ===
 """
 Обновленная handlers/menu.py - ПОЛНАЯ ВЕРСИЯ
 Изменён обработчик кнопки "Ошибки телефонии" - теперь показывает Reply меню
@@ -2187,7 +2255,8 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             MESSAGES["unknown_command"],
             reply_markup=current_menu
-        )--- ./handlers/analytics.py ---
+        )
+=== ./handlers/analytics.py ===
 """
 Обработчики для полного дашборда статистики ошибок
 """
@@ -2412,8 +2481,10 @@ async def show_response_time_stats(update: Update, context: ContextTypes.DEFAULT
 
 async def show_response_time_stats_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Заглушка"""
-    await show_dashboard_page(update, context)--- ./database/__init__.py ---
---- ./database/models.py ---
+    await show_dashboard_page(update, context)
+=== ./database/__init__.py ===
+
+=== ./database/models.py ===
 """
 ИСПРАВЛЕННАЯ ПОЛНАЯ ВЕРСИЯ: database/models.py
 Добавлена поддержка SIP менеджеров
@@ -2991,17 +3062,10 @@ class Database:
 
 
 # Глобальный экземпляр БД
-db = Database()--- ./services/google_sheets_service.py ---
-"""
-ИСПРАВЛЕННЫЙ: services/google_sheets_service.py
-Сервис для работы с Google Sheets
-Автоматическое обновление статистики менеджеров
-
-ИЗМЕНЕНИЯ:
-✅ Убрана сортировка при обновлении данных
-✅ Менеджеры теперь всегда в фиксированном порядке (по алфавиту)
-✅ История предыдущих дней сохраняется корректно
-"""
+db = Database()
+=== ./services/google_sheets_service.py ===
+"""Сервис для работы с Google Sheets
+Автоматическое обновление статистики менеджеров"""
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -3013,6 +3077,28 @@ from gspread.exceptions import WorksheetNotFound, APIError
 
 from utils.logger import logger
 from config.settings import settings
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+import logging
+from gspread.exceptions import APIError
+import aiohttp
+
+# Настройка retry для API запросов
+API_RETRY_CONFIG = {
+    'stop': stop_after_attempt(3),                    # Максимум 3 попытки
+    'wait': wait_exponential(min=2, max=10),          # 2с, 4с, 8с
+    'retry': retry_if_exception_type((
+        APIError,                                      # Google Sheets API ошибки
+        aiohttp.ClientError,                          # Сетевые ошибки
+        TimeoutError                                   # Таймауты
+    )),
+    'before_sleep': before_sleep_log(logger, logging.WARNING)  # Логируем перед повтором
+}
 
 # Загрузка .env файла
 load_dotenv()
@@ -3198,9 +3284,10 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка создания листа: {e}")
             return None
     
+    @retry(**API_RETRY_CONFIG)
     async def _get_managers_stats(self, target_date: str) -> List[Dict]:
         """
-        Получить статистику по всем менеджерам
+        Получить статистику по всем менеджерам С АВТОПОВТОРОМ
         
         Args:
             target_date: Дата в формате YYYY-MM-DD (не используется)
@@ -3209,7 +3296,7 @@ class GoogleSheetsService:
             Список менеджеров с данными (в алфавитном порядке)
         """
         try:
-            # ✅ ФИКСИРОВАННЫЙ СПИСОК - ТОЛЬКО ПАВЛОГРАД (в алфавитном порядке!)
+            # ✅ ФИКСИРОВАННЫЙ СПИСОК - ТОЛЬКО ПАВЛОГРАД
             FIXED_MANAGERS = [
                 "Алладин", "Аня", "Ваня", "Вова", "Ганжа", "Диана", 
                 "Диди", "Дима", "Добряк", "Дрон", "Егор", "Женя",
@@ -3317,6 +3404,7 @@ class GoogleSheetsService:
             
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики менеджеров: {e}")
+            raise  # ✅ Пробрасываем для retry
             import traceback
             logger.error(traceback.format_exc())
             
@@ -3332,16 +3420,16 @@ class GoogleSheetsService:
                 for name in FIXED_MANAGERS
             ]
     
+    @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
         """
-        Обновить статистику в Google Sheets
+        Обновить статистику в Google Sheets С АВТОПОВТОРОМ
         Запускается каждый час (8:00-19:00, ПН-СБ)
         
-        ✅ ИСПРАВЛЕНО: Убрана сортировка - менеджеры всегда в алфавитном порядке
+        ✅ ДОБАВЛЕНО: Retry при сбоях сети/API
         """
         if not self.client or not self.spreadsheet:
-            logger.error("❌ Google Sheets сервис не инициализирован")
-            return
+            raise Exception("Google Sheets сервис не инициализирован")
         
         try:
             now = datetime.now(self.timezone)
@@ -3356,7 +3444,7 @@ class GoogleSheetsService:
             except WorksheetNotFound:
                 worksheet = await self._create_weekly_sheet()
                 if not worksheet:
-                    return
+                    raise Exception("Не удалось создать лист")
             
             # Получение статистики менеджеров за текущий день
             current_date = now.strftime("%Y-%m-%d")
@@ -3365,11 +3453,10 @@ class GoogleSheetsService:
             if not managers_data:
                 logger.warning("⚠️ Нет данных для обновления")
                 return
-            
-            # ✅ УБРАНА СОРТИРОВКА - менеджеры уже в алфавитном порядке
+        
             logger.info(f"📋 Менеджеры в фиксированном порядке (алфавит)")
             
-            # ===== ОПРЕДЕЛЕНИЕ ДНЯ НЕДЕЛИ =====
+            # Определение дня недели
             weekday = now.weekday()
             days_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
             
@@ -3380,7 +3467,7 @@ class GoogleSheetsService:
                 logger.info("📅 Воскресенье - обновление не требуется")
                 return
             
-            # Колонка для трубок: C=ПН, D=ВТ, E=СР, F=ЧТ, G=ПТ, H=СБ
+            # Колонка для трубок
             tubes_col = 3 + weekday
             tubes_col_letter = chr(64 + tubes_col)
             
@@ -3404,7 +3491,7 @@ class GoogleSheetsService:
             
             updates = []
             
-            # 1. Номера и имена менеджеров (колонки A-B)
+            # 1. Номера и имена менеджеров
             names_range_values = []
             for idx, data in enumerate(rows_data, start=1):
                 names_range_values.append([idx, data['name']])
@@ -3414,7 +3501,7 @@ class GoogleSheetsService:
                 'values': names_range_values
             })
             
-            # 2. Трубки за текущий день (одна колонка)
+            # 2. Трубки за текущий день
             tubes_values = [[data['tubes']] for data in rows_data]
             updates.append({
                 'range': f'{tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}',
@@ -3423,7 +3510,7 @@ class GoogleSheetsService:
             
             logger.info(f"📝 Запись данных в колонку {tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}")
             
-            # 3. Формулы для "Итого трубок" (колонка I)
+            # 3. Формулы для "Итого трубок"
             formulas_total = [
                 [f"=SUM(C{data['row']}:H{data['row']})"] 
                 for data in rows_data
@@ -3503,6 +3590,7 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка обновления статистики: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            raise  # ✅ Пробрасываем ошибку для retry
     
     async def create_weekly_sheet_if_needed(self):
         """
@@ -3527,8 +3615,10 @@ class GoogleSheetsService:
 
 
 # ✅ Глобальный экземпляр сервиса
-google_sheets_service = GoogleSheetsService()--- ./services/__init__.py ---
---- ./services/analytics_service.py ---
+google_sheets_service = GoogleSheetsService()
+=== ./services/__init__.py ===
+
+=== ./services/analytics_service.py ===
 """
 Сервис аналитики ошибок телефонии - исправленная версия
 """
@@ -3931,21 +4021,22 @@ class AnalyticsService:
 
 
 # Глобальный экземпляр сервиса
-analytics_service = AnalyticsService()--- ./services/scheduler_service.py ---
+analytics_service = AnalyticsService()
+=== ./services/scheduler_service.py ===
 """
-ИСПРАВЛЕННЫЙ ФАЙЛ: services/scheduler_service.py
-Планировщик задач для автоматического обновления Google Sheets
-
-ИЗМЕНЕНИЯ:
-✅ Заменен _run_async_task на использование asyncio.run() (более эффективно)
+ФИНАЛЬНАЯ ВЕРСИЯ: services/scheduler_service.py
+С уведомлениями админу при критических ошибках
 """
 import asyncio
 from datetime import datetime
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from telegram import Bot
 
 from utils.logger import logger
+from utils.notifications import notification_service
+from config.settings import settings
 
 
 class SchedulerService:
@@ -3959,24 +4050,38 @@ class SchedulerService:
         self._last_update_success = None
         self._update_count = 0
         self._error_count = 0
+        self._consecutive_errors = 0  # ✅ НОВОЕ: Счётчик ошибок подряд
+        self._bot = None  # ✅ НОВОЕ: Экземпляр бота для уведомлений
     
-    def _run_async_task(self, coro):
+    def set_bot(self, bot: Bot):
         """
-        Запустить асинхронную задачу в синхронном контексте
-        
-        ✅ ИСПРАВЛЕНО: Используется asyncio.run() вместо создания нового event loop
+        Установить экземпляр бота для отправки уведомлений
         
         Args:
-            coro: Корутина для запуска
+            bot: Экземпляр Telegram бота
         """
+        self._bot = bot
+        logger.info("✅ Бот установлен для отправки уведомлений")
+    
+    def _run_async_task(self, coro):
+        """Запустить асинхронную задачу в синхронном контексте"""
+        loop = None
         try:
-            asyncio.run(coro)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(coro)
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения задачи: {e}")
             raise
+        finally:
+            if loop is not None:
+                try:
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"⚠️ Ошибка закрытия event loop: {e}")
     
     def _update_stats_job(self):
-        """Задача обновления статистики"""
+        """Задача обновления статистики С УВЕДОМЛЕНИЯМИ"""
         try:
             from services.google_sheets_service import google_sheets_service
             
@@ -3987,12 +4092,26 @@ class SchedulerService:
             if not google_sheets_service.client or not google_sheets_service.spreadsheet:
                 logger.error("❌ Google Sheets сервис не инициализирован!")
                 self._error_count += 1
+                self._consecutive_errors += 1
+                
+                # ✅ Уведомление если 3 ошибки подряд
+                if self._consecutive_errors >= 3 and self._bot:
+                    self._send_critical_notification(
+                        "Google Sheets не инициализирован",
+                        f"{self._consecutive_errors} ошибок подряд при инициализации"
+                    )
                 return
             
-            # Выполнение обновления
+            # Выполнение обновления (с retry внутри)
             self._run_async_task(google_sheets_service.update_stats())
             
-            # Обновление статистики успеха
+            # ✅ УСПЕХ - Обнуляем счётчики
+            if self._consecutive_errors >= 3:
+                # Было много ошибок, но теперь восстановились - уведомляем
+                if self._bot:
+                    self._send_recovery_notification("Google Sheets обновление")
+            
+            self._consecutive_errors = 0  # Сброс счётчика
             self._last_update_success = now
             self._update_count += 1
             
@@ -4000,12 +4119,29 @@ class SchedulerService:
             
         except Exception as e:
             self._error_count += 1
-            logger.error(f"❌ Ошибка задачи обновления статистики: {e}")
-            logger.error(f"⚠️ Всего ошибок: {self._error_count}")
+            self._consecutive_errors += 1
             
-            # Если слишком много ошибок подряд - уведомление
-            if self._error_count >= 3:
-                logger.warning(f"⚠️ ВНИМАНИЕ: {self._error_count} ошибок обновления подряд!")
+            error_msg = str(e)
+            logger.error(f"❌ Ошибка задачи обновления статистики: {error_msg}")
+            logger.error(f"⚠️ Ошибок подряд: {self._consecutive_errors}, всего: {self._error_count}")
+            
+            # ✅ УВЕДОМЛЕНИЕ после 3 ошибок подряд
+            if self._consecutive_errors >= 3 and self._bot:
+                additional_info = (
+                    f"• Всего обновлений: {self._update_count}\n"
+                    f"• Всего ошибок: {self._error_count}\n"
+                    f"• Ошибок подряд: {self._consecutive_errors}"
+                )
+                
+                self._send_critical_notification(
+                    "Google Sheets обновление",
+                    error_msg,
+                    additional_info
+                )
+            
+            # Предупреждение в логах
+            if self._consecutive_errors >= 5:
+                logger.warning(f"⚠️ КРИТИЧНО: {self._consecutive_errors} ошибок обновления подряд!")
     
     def _create_weekly_sheet_job(self):
         """Задача создания нового листа"""
@@ -4017,6 +4153,12 @@ class SchedulerService:
             
             if not google_sheets_service.client or not google_sheets_service.spreadsheet:
                 logger.error("❌ Google Sheets сервис не инициализирован!")
+                
+                if self._bot:
+                    self._send_critical_notification(
+                        "Создание листа недели",
+                        "Google Sheets сервис не инициализирован"
+                    )
                 return
             
             self._run_async_task(google_sheets_service.create_weekly_sheet_if_needed())
@@ -4025,6 +4167,12 @@ class SchedulerService:
             
         except Exception as e:
             logger.error(f"❌ Ошибка задачи создания листа: {e}")
+            
+            if self._bot:
+                self._send_critical_notification(
+                    "Создание листа недели",
+                    str(e)
+                )
     
     def _reset_sips_job(self):
         """Задача сброса SIP (каждое утро в 8:00)"""
@@ -4034,12 +4182,58 @@ class SchedulerService:
             now = datetime.now(self.timezone)
             logger.info(f"⏰ Запуск сброса SIP ({now.strftime('%Y-%m-%d %H:%M')})")
             
-            db.reset_all_sips()
+            affected = db.reset_all_sips()
             
-            logger.info("✅ SIP всех менеджеров сброшены")
+            if affected > 0:
+                logger.info(f"✅ Сброшено {affected} SIP менеджеров")
+            else:
+                logger.info("ℹ️ SIP уже были сброшены ранее")
             
         except Exception as e:
             logger.error(f"❌ Ошибка задачи сброса SIP: {e}")
+            
+            if self._bot:
+                self._send_critical_notification(
+                    "Сброс SIP менеджеров",
+                    str(e)
+                )
+    
+    def _send_critical_notification(
+        self,
+        error_type: str,
+        error_msg: str,
+        additional_info: str = None
+    ):
+        """Отправить критическое уведомление админу"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                notification_service.notify_critical_error(
+                    bot=self._bot,
+                    error_type=error_type,
+                    details=error_msg,
+                    additional_info=additional_info
+                )
+            )
+            loop.close()
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить уведомление: {e}")
+    
+    def _send_recovery_notification(self, service_name: str):
+        """Отправить уведомление о восстановлении"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                notification_service.notify_recovery(
+                    bot=self._bot,
+                    service_name=service_name
+                )
+            )
+            loop.close()
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить уведомление о восстановлении: {e}")
     
     def add_jobs(self):
         """Добавить задачи в планировщик"""
@@ -4049,29 +4243,27 @@ class SchedulerService:
         
         try:
             # ===== ЗАДАЧА 1: Обновление статистики =====
-            # Каждый час с 8:00 до 19:00, ПН-СБ
             self.scheduler.add_job(
                 func=self._update_stats_job,
                 trigger=CronTrigger(
-                    day_of_week='mon-sat',  # Понедельник-Суббота
-                    hour='8-19',            # С 8 утра до 19 вечера
-                    minute=0,               # В начале часа
+                    day_of_week='mon-sat',
+                    hour='8-19',
+                    minute=0,
                     timezone=self.timezone
                 ),
                 id='update_stats',
                 name='Обновление статистики в Google Sheets',
                 replace_existing=True,
-                max_instances=1  # Не запускать новую задачу, если предыдущая ещё работает
+                max_instances=1
             )
             
             # ===== ЗАДАЧА 2: Создание нового листа =====
-            # Каждый понедельник в 00:01
             self.scheduler.add_job(
                 func=self._create_weekly_sheet_job,
                 trigger=CronTrigger(
-                    day_of_week='mon',      # Понедельник
-                    hour=0,                 # 00 часов
-                    minute=1,               # 01 минута
+                    day_of_week='mon',
+                    hour=0,
+                    minute=1,
                     timezone=self.timezone
                 ),
                 id='create_weekly_sheet',
@@ -4081,12 +4273,11 @@ class SchedulerService:
             )
             
             # ===== ЗАДАЧА 3: Сброс SIP =====
-            # Каждое утро в 8:00 (ПН-СБ)
             self.scheduler.add_job(
                 func=self._reset_sips_job,
                 trigger=CronTrigger(
-                    day_of_week='mon-sat',  # Понедельник-Суббота
-                    hour=8,                 # 8 утра
+                    day_of_week='mon-sat',
+                    hour=8,
                     minute=0,
                     timezone=self.timezone
                 ),
@@ -4099,8 +4290,7 @@ class SchedulerService:
             self._jobs_added = True
             logger.info("✅ Задачи добавлены в планировщик")
             logger.info("✅ Задача сброса SIP добавлена (8:00, ПН-СБ)")
-            
-            # Вывод информации о задачах
+        
             self._print_jobs_info()
             
         except Exception as e:
@@ -4133,6 +4323,7 @@ class SchedulerService:
                 logger.info("📊 Статистика будет обновляться каждый час (8:00-19:00, ПН-СБ)")
                 logger.info("📋 Новый лист будет создаваться каждый понедельник в 00:01")
                 logger.info("🔄 SIP будут сбрасываться каждое утро в 8:00 (ПН-СБ)")
+                logger.info("📨 Критические ошибки будут отправляться админам")
             else:
                 logger.warning("⚠️ Планировщик уже запущен")
             
@@ -4145,12 +4336,11 @@ class SchedulerService:
             if self.scheduler.running:
                 self.scheduler.shutdown()
                 logger.info("⏹️ Планировщик задач остановлен")
-                
-                # Вывод финальной статистики
+            
                 if self._update_count > 0:
                     logger.info(f"📊 Статистика работы:")
                     logger.info(f"  ✅ Успешных обновлений: {self._update_count}")
-                    logger.info(f"  ❌ Ошибок: {self._error_count}")
+                    logger.info(f"  ❌ Всего ошибок: {self._error_count}")
                     if self._last_update_success:
                         logger.info(f"  ⏰ Последнее обновление: {self._last_update_success.strftime('%Y-%m-%d %H:%M')}")
         except Exception as e:
@@ -4162,30 +4352,18 @@ class SchedulerService:
         self._update_stats_job()
     
     def get_stats(self) -> dict:
-        """
-        Получить статистику работы планировщика
-        
-        Returns:
-            Словарь со статистикой
-        """
+        """Получить статистику работы планировщика"""
         return {
             'running': self.scheduler.running,
             'update_count': self._update_count,
             'error_count': self._error_count,
+            'consecutive_errors': self._consecutive_errors,
             'last_update': self._last_update_success.strftime('%Y-%m-%d %H:%M') if self._last_update_success else None,
             'jobs_count': len(self.scheduler.get_jobs()) if self.scheduler else 0
         }
     
     def get_next_run_time(self, job_id: str) -> str:
-        """
-        Получить время следующего запуска задачи
-        
-        Args:
-            job_id: ID задачи ('update_stats' или 'create_weekly_sheet')
-            
-        Returns:
-            Строка с временем или None
-        """
+        """Получить время следующего запуска задачи"""
         try:
             job = self.scheduler.get_job(job_id)
             if job and hasattr(job, 'next_run_time') and job.next_run_time:
@@ -4197,8 +4375,7 @@ class SchedulerService:
 
 # Глобальный экземпляр планировщика
 scheduler_service = SchedulerService()
-
-# НЕ запускаем автоматически - запуск только через main.py--- ./services/managers_stats_service.py ---
+=== ./services/managers_stats_service.py ===
 """
 Сервис для работы со статистикой менеджеров из Google Sheets - улучшенная визуализация
 """
@@ -4394,7 +4571,8 @@ class ManagersStatsService:
 
 
 # Глобальный экземпляр сервиса
-managers_stats_service = ManagersStatsService()--- ./services/management_service.py ---
+managers_stats_service = ManagersStatsService()
+=== ./services/management_service.py ===
 """
 Сервис управления ботом (менеджеры, телефонии, рассылка)
 """
@@ -4576,7 +4754,8 @@ class ManagementService:
 
 
 # Глобальный экземпляр сервиса
-management_service = ManagementService()--- ./services/telephony_service.py ---
+management_service = ManagementService()
+=== ./services/telephony_service.py ===
 """
 Сервис для работы с телефонией и отправкой ошибок
 """
@@ -4756,7 +4935,8 @@ class TelephonyService:
 
 
 # Глобальный экземпляр сервиса
-telephony_service = TelephonyService()--- ./services/user_service.py ---
+telephony_service = TelephonyService()
+=== ./services/user_service.py ===
 """
 Сервис для работы с пользователями
 """
@@ -4836,7 +5016,8 @@ class UserService:
 
 
 # Глобальный экземпляр сервиса
-user_service = UserService()--- ./services/stats_service.py ---
+user_service = UserService()
+=== ./services/stats_service.py ===
 """
 Сервис для работы со статистикой из Google Sheets через Apps Script
 """
@@ -5006,8 +5187,182 @@ class StatsService:
 
 
 # Глобальный экземпляр сервиса
-stats_service = StatsService()--- ./utils/__init__.py ---
---- ./utils/logger.py ---
+stats_service = StatsService()
+=== ./utils/notifications.py ===
+"""
+Модуль для отправки уведомлений администраторам
+"""
+from datetime import datetime
+from typing import Optional
+from telegram import Bot
+from telegram.error import TelegramError
+
+from config.settings import settings
+from utils.logger import logger
+
+
+class NotificationService:
+    """Сервис для отправки уведомлений админам"""
+    
+    # Защита от спама - не отправлять одинаковые уведомления чаще чем раз в N минут
+    _last_notifications = {}
+    _cooldown_minutes = 30
+    
+    @staticmethod
+    async def notify_critical_error(
+        bot: Bot,
+        error_type: str,
+        details: str,
+        additional_info: Optional[str] = None
+    ):
+        """
+        Отправить критическое уведомление админам
+        
+        Args:
+            bot: Экземпляр бота
+            error_type: Тип ошибки (например: "Google Sheets", "Планировщик")
+            details: Детали ошибки
+            additional_info: Дополнительная информация
+        """
+        # Проверка на спам
+        notification_key = f"{error_type}:{details[:50]}"
+        
+        if NotificationService._is_recently_sent(notification_key):
+            logger.debug(f"⏭ Пропускаем уведомление (cooldown): {error_type}")
+            return
+        
+        # Формируем сообщение
+        message = NotificationService._format_critical_message(
+            error_type, details, additional_info
+        )
+        
+        # Отправляем всем админам
+        success_count = 0
+        for admin_id in settings.ADMINS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=message,
+                    parse_mode="HTML"
+                )
+                success_count += 1
+                logger.info(f"✅ Критическое уведомление отправлено админу {admin_id}")
+            except TelegramError as e:
+                logger.error(f"❌ Не удалось уведомить админа {admin_id}: {e}")
+        
+        if success_count > 0:
+            # Сохраняем время последней отправки
+            NotificationService._last_notifications[notification_key] = datetime.now()
+            logger.info(f"📨 Критическое уведомление отправлено {success_count} админам")
+    
+    @staticmethod
+    async def notify_warning(
+        bot: Bot,
+        warning_type: str,
+        details: str
+    ):
+        """
+        Отправить предупреждение админам
+        
+        Args:
+            bot: Экземпляр бота
+            warning_type: Тип предупреждения
+            details: Детали
+        """
+        message = (
+            f"⚠️ <b>ПРЕДУПРЕЖДЕНИЕ</b>\n\n"
+            f"📝 {warning_type}\n"
+            f"ℹ️ {details}\n\n"
+            f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        for admin_id in settings.ADMINS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=message,
+                    parse_mode="HTML"
+                )
+            except TelegramError as e:
+                logger.error(f"❌ Не удалось отправить предупреждение админу {admin_id}: {e}")
+    
+    @staticmethod
+    async def notify_recovery(
+        bot: Bot,
+        service_name: str
+    ):
+        """
+        Уведомление о восстановлении после ошибок
+        
+        Args:
+            bot: Экземпляр бота
+            service_name: Название сервиса который восстановился
+        """
+        message = (
+            f"✅ <b>ВОССТАНОВЛЕНИЕ</b>\n\n"
+            f"📊 {service_name}\n"
+            f"✅ Работа восстановлена после ошибок\n\n"
+            f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        for admin_id in settings.ADMINS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=message,
+                    parse_mode="HTML"
+                )
+            except TelegramError:
+                pass  # Не логируем ошибки для recovery уведомлений
+    
+    @staticmethod
+    def _format_critical_message(
+        error_type: str,
+        details: str,
+        additional_info: Optional[str]
+    ) -> str:
+        """Форматирует критическое сообщение"""
+        
+        # Ограничиваем длину details
+        if len(details) > 500:
+            details = details[:497] + "..."
+        
+        message = (
+            f"🚨 <b>КРИТИЧЕСКАЯ ОШИБКА</b>\n\n"
+            f"📊 <b>Компонент:</b> {error_type}\n"
+            f"❌ <b>Ошибка:</b>\n<code>{details}</code>\n"
+        )
+        
+        if additional_info:
+            message += f"\nℹ️ <b>Доп. информация:</b>\n{additional_info}\n"
+        
+        message += f"\n⏰ <b>Время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+        
+        return message
+    
+    @staticmethod
+    def _is_recently_sent(notification_key: str) -> bool:
+        """Проверяет был ли уже отправлен такой же notification недавно"""
+        if notification_key not in NotificationService._last_notifications:
+            return False
+        
+        last_time = NotificationService._last_notifications[notification_key]
+        minutes_passed = (datetime.now() - last_time).total_seconds() / 60
+        
+        return minutes_passed < NotificationService._cooldown_minutes
+    
+    @staticmethod
+    def clear_cooldowns():
+        """Очистить все cooldowns (для тестирования)"""
+        NotificationService._last_notifications.clear()
+
+
+# Глобальный экземпляр
+notification_service = NotificationService()
+
+=== ./utils/__init__.py ===
+
+=== ./utils/logger.py ===
 """
 Настройка логирования для бота
 """
@@ -5051,7 +5406,8 @@ def setup_logger(name: str = __name__, level: int = logging.INFO) -> logging.Log
 
 # Глобальный logger для использования в других модулях
 logger = setup_logger("bot", logging.INFO)
---- ./utils/state.py ---
+
+=== ./utils/state.py ===
 """
 Утилиты для управления состоянием пользователя
 """
@@ -5178,7 +5534,8 @@ def get_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> tuple:
     tel = context.user_data.get("chosen_tel")
     tel_code = context.user_data.get("chosen_tel_code")
     return tel, tel_code
---- ./scripts/update_managers_info.py ---
+
+=== ./scripts/update_managers_info.py ===
 #!/usr/bin/env python3
 """
 Скрипт обновления информации о менеджерах через Telegram API
@@ -5237,7 +5594,8 @@ async def update_managers_info():
 
 if __name__ == "__main__":
     asyncio.run(update_managers_info())
---- ./scripts/test_sheets.py ---
+
+=== ./scripts/test_sheets.py ===
 #!/usr/bin/env python3
 import os
 from dotenv import load_dotenv  # ВАЖНО: добавлено!
@@ -5291,7 +5649,8 @@ try:
 except Exception as e:
     print(f"❌ Ошибка: {e}")
     import traceback
-    traceback.print_exc()--- ./scripts/migrate_add_analytics_fields.py ---
+    traceback.print_exc()
+=== ./scripts/migrate_add_analytics_fields.py ===
 #!/usr/bin/env python3
 """
 Миграция БД: добавление полей для аналитики
@@ -5339,7 +5698,8 @@ def migrate_analytics_fields():
 
 if __name__ == "__main__":
     migrate_analytics_fields()
---- ./scripts/migrate_telephonies.py ---
+
+=== ./scripts/migrate_telephonies.py ===
 #!/usr/bin/env python3
 """
 Скрипт миграции существующих телефоний в БД
@@ -5394,7 +5754,8 @@ def migrate_telephonies():
 
 if __name__ == "__main__":
     migrate_telephonies()
---- ./scripts/migrate_managers.py ---
+
+=== ./scripts/migrate_managers.py ===
 #!/usr/bin/env python3
 """
 Скрипт миграции существующих менеджеров из .env в БД
@@ -5454,7 +5815,8 @@ def migrate_managers():
 
 if __name__ == "__main__":
     migrate_managers()
---- ./update_sheets_now.py ---
+
+=== ./update_sheets_now.py ===
 #!/usr/bin/env python3
 """
 Скрипт для ручного обновления Google Sheets

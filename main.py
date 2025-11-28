@@ -1,9 +1,9 @@
 """
-ФИНАЛЬНАЯ ВЕРСИЯ: main.py
-Главная точка входа для запуска Telegram бота
-
-ИСПРАВЛЕНИЯ:
-✅ Добавлен per_message=True для всех ConversationHandler (убраны warnings)
+ОБНОВЛЁННАЯ ВЕРСИЯ: main.py
+Добавлены:
+✅ Graceful shutdown
+✅ Health check команда
+✅ Улучшенная обработка остановки
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -11,9 +11,11 @@ from telegram.ext import (
 )
 from config.settings import settings
 from utils.logger import logger
+from utils.shutdown import shutdown_handler  # ✅ НОВОЕ
 
 # Импортируем обработчики
 from handlers.commands import start_command
+from handlers.health import health_command  # ✅ НОВОЕ
 from handlers.callbacks import (
     role_choice_callback,
     tel_choice_callback,
@@ -61,6 +63,7 @@ def register_handlers(app: Application):
     """
     # Команды
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("health", health_command))  # ✅ НОВОЕ
     
     # ===== CONVERSATION HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
     
@@ -71,7 +74,6 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID: [MessageHandler(filters.TEXT | filters.FORWARDED, add_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
-        # ✅ Убрано per_message - не нужно для MessageHandler
     )
     app.add_handler(add_manager_conv)
     
@@ -82,7 +84,6 @@ def register_handlers(app: Application):
             WAITING_MANAGER_ID_REMOVE: [MessageHandler(filters.TEXT, remove_manager_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
-        # ✅ Убрано per_message
     )
     app.add_handler(remove_manager_conv)
     
@@ -96,7 +97,6 @@ def register_handlers(app: Application):
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT, add_telephony_group)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
-        # ✅ Убрано per_message
     )
     app.add_handler(add_tel_conv)
     
@@ -107,7 +107,6 @@ def register_handlers(app: Application):
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT, remove_telephony_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
-        # ✅ Убрано per_message
     )
     app.add_handler(remove_tel_conv)
     
@@ -118,11 +117,10 @@ def register_handlers(app: Application):
             WAITING_BROADCAST_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)]
-        # ✅ Убрано per_message
     )
     app.add_handler(broadcast_conv)
     
-    # ✅ ConversationHandler для BMW (уже исправлен в quick_errors.py)
+    # ConversationHandler для BMW
     app.add_handler(quick_bmw_conv)
     
     # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
@@ -188,11 +186,11 @@ def main():
         
         logger.info("✅ Бот успешно запущен и готов к работе!")
         
-        # ===== ЗАПУСК ПЛАНИРОВЩИКА (ПОСЛЕ РЕГИСТРАЦИИ ОБРАБОТЧИКОВ) =====
+        # ===== ЗАПУСК ПЛАНИРОВЩИКА =====
         try:
             from services.scheduler_service import scheduler_service
             
-            # ✅ НОВОЕ: Передаём экземпляр бота для отправки уведомлений
+            # Передаём экземпляр бота для отправки уведомлений
             scheduler_service.set_bot(app.bot)
             
             if not scheduler_service.scheduler.running:
@@ -204,24 +202,44 @@ def main():
             logger.warning(f"⚠️ Планировщик не запущен: {e}")
             import traceback
             logger.error(traceback.format_exc())
+        
+        # ===== ✅ НОВОЕ: РЕГИСТРАЦИЯ SHUTDOWN CALLBACKS =====
+        def stop_scheduler():
+            """Остановка планировщика"""
+            try:
+                from services.scheduler_service import scheduler_service
+                scheduler_service.stop()
+            except Exception as e:
+                logger.error(f"❌ Ошибка остановки планировщика: {e}")
+        
+        def stop_application():
+            """Остановка приложения"""
+            try:
+                logger.info("🛑 Остановка Telegram приложения...")
+                # Application остановится автоматически при sys.exit()
+            except Exception as e:
+                logger.error(f"❌ Ошибка остановки приложения: {e}")
+        
+        # Регистрируем callbacks
+        shutdown_handler.register_callback(stop_scheduler)
+        shutdown_handler.register_callback(stop_application)
+        
+        # Устанавливаем обработчики сигналов
+        shutdown_handler.setup_handlers()
         # ===================================
         
         # Запуск polling (блокирует выполнение)
+        logger.info("🔄 Запуск polling...")
         app.run_polling(
             allowed_updates=["message", "callback_query"],
             drop_pending_updates=True
         )
         
+    except KeyboardInterrupt:
+        logger.info("⌨️ Получен Ctrl+C")
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при запуске бота: {e}", exc_info=True)
         raise
-    finally:
-        # Останавливаем планировщик при выключении
-        try:
-            from services.scheduler_service import scheduler_service
-            scheduler_service.stop()
-        except:
-            pass
 
 
 if __name__ == "__main__":

@@ -1,687 +1,228 @@
-import logging
-import os
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton, error as telegram_error
-)
+"""
+ФИНАЛЬНАЯ ВЕРСИЯ: main.py
+Главная точка входа для запуска Telegram бота
+
+ИСПРАВЛЕНИЯ:
+✅ Добавлен per_message=True для всех ConversationHandler (убраны warnings)
+"""
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+    MessageHandler, filters, ConversationHandler
+)
+from config.settings import settings
+from utils.logger import logger
+
+# Импортируем обработчики
+from handlers.commands import start_command
+from handlers.callbacks import (
+    role_choice_callback,
+    tel_choice_callback,
+    support_callback,
+    fallback_callback
+)
+from handlers.messages import message_handler
+from handlers.errors import error_handler
+
+# Импортируем обработчики управления
+from handlers.management import (
+    show_management_menu,
+    managers_menu, list_managers, add_manager_start, add_manager_process,
+    remove_manager_start, remove_manager_process,
+    telephonies_menu, list_telephonies, 
+    add_telephony_start, add_telephony_name, add_telephony_code, 
+    add_telephony_type, add_telephony_group,
+    remove_telephony_start, remove_telephony_process,
+    broadcast_start, broadcast_process, broadcast_confirm,
+    cancel_conversation,
+    WAITING_MANAGER_ID, WAITING_MANAGER_ID_REMOVE,
+    WAITING_TEL_NAME, WAITING_TEL_CODE, WAITING_TEL_TYPE, WAITING_TEL_GROUP,
+    WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
 )
 
-# ===== КОНФИГУРАЦИЯ =====
-load_dotenv()
-
-def validate_env():
-    """Проверка наличия всех необходимых переменных окружения"""
-    required = {
-        "BOT_TOKEN": os.getenv("BOT_TOKEN"),
-        "ADMIN_ID": os.getenv("ADMIN_ID"),
-        "BMW_GROUP_ID": os.getenv("BMW_GROUP_ID"),
-        "ZVONARI_GROUP_ID": os.getenv("ZVONARI_GROUP_ID")
-    }
-    
-    missing = [key for key, value in required.items() if not value]
-    if missing:
-        raise ValueError(f"❌ Отсутствуют переменные в .env: {', '.join(missing)}")
-    
-    return required
-
-# Валидация и загрузка переменных
-env_vars = validate_env()
-TOKEN = env_vars["BOT_TOKEN"]
-ADMIN_ID = int(env_vars["ADMIN_ID"])
-BMW_GROUP_ID = int(env_vars["BMW_GROUP_ID"])
-ZVONARI_GROUP_ID = int(env_vars["ZVONARI_GROUP_ID"])
-
-# Парсинг менеджеров
-MANAGERS_STR = os.getenv("MANAGERS_IDS", "")
-MANAGERS = [int(id.strip()) for id in MANAGERS_STR.split(",") if id.strip().isdigit()]
-if ADMIN_ID not in MANAGERS:
-    MANAGERS.append(ADMIN_ID)
-
-# Маппинг телефонии (кириллица → латиница для callback_data)
-TEL_GROUPS = {
-    "BMW": BMW_GROUP_ID,
-    "Звонари": ZVONARI_GROUP_ID
-}
-
-TEL_CODES = {
-    "BMW": "bmw",
-    "Звонари": "zvon"
-}
-
-TEL_CODES_REVERSE = {v: k for k, v in TEL_CODES.items()}
-
-# Конфигурация меню для ролей
-MANAGER_MENU = [
-    ["Ошибки телефонии"],
-    ["Полезные ссылки"],
-    ["Поддержка"]
-]
-
-ADMIN_MENU = [
-    ["Статистика по базам"],
-    ["Управление ботом"],
-    ["Поддержка"]
-]
-
-# Timeout для выбора телефонии (в минутах)
-TEL_CHOICE_TIMEOUT = 10
-
-# ===== ЛОГИРОВАНИЕ =====
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+# Импортируем обработчики аналитики
+from handlers.analytics import (
+    show_errors_stats_menu, show_general_stats, show_general_stats_period,
+    show_managers_stats, show_managers_stats_period,
+    show_support_stats, show_support_stats_period,
+    show_response_time_stats, show_response_time_stats_period,
+    show_dashboard_start, show_dashboard_page
 )
-logger = logging.getLogger(__name__)
 
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
+# Импортируем ConversationHandler для быстрых ошибок
+from handlers.quick_errors import quick_bmw_conv
 
-def get_manager_menu() -> ReplyKeyboardMarkup:
-    """Генерирует клавиатуру меню для менеджера"""
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton(text) for text in row] for row in MANAGER_MENU],
-        resize_keyboard=True
+
+def register_handlers(app: Application):
+    """
+    Регистрирует все обработчики бота
+    
+    Args:
+        app: Экземпляр Application
+    """
+    # Команды
+    app.add_handler(CommandHandler("start", start_command))
+    
+    # ===== CONVERSATION HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
+    
+    # Добавление менеджера
+    add_manager_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_manager_start, pattern="^mgmt_add_manager$")],
+        states={
+            WAITING_MANAGER_ID: [MessageHandler(filters.TEXT | filters.FORWARDED, add_manager_process)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message - не нужно для MessageHandler
     )
-
-def get_admin_menu() -> ReplyKeyboardMarkup:
-    """Генерирует клавиатуру меню для админа"""
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton(text) for text in row] for row in ADMIN_MENU],
-        resize_keyboard=True
+    app.add_handler(add_manager_conv)
+    
+    # Удаление менеджера
+    remove_manager_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(remove_manager_start, pattern="^mgmt_remove_manager$")],
+        states={
+            WAITING_MANAGER_ID_REMOVE: [MessageHandler(filters.TEXT, remove_manager_process)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
-
-def is_tel_choice_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Проверяет, истёк ли timeout выбора телефонии"""
-    chosen_at = context.user_data.get("tel_chosen_at")
-    if not chosen_at:
-        return True
-    return datetime.now() - chosen_at > timedelta(minutes=TEL_CHOICE_TIMEOUT)
-
-def clear_tel_choice(context: ContextTypes.DEFAULT_TYPE):
-    """Очищает данные выбора телефонии"""
-    context.user_data.pop("chosen_tel", None)
-    context.user_data.pop("chosen_tel_code", None)
-    context.user_data.pop("tel_chosen_at", None)
-
-def get_telephony_keyboard() -> InlineKeyboardMarkup:
-    """Возвращает клавиатуру выбора телефонии"""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("BMW", callback_data="tel_bmw")],
-        [InlineKeyboardButton("Звонари", callback_data="tel_zvon")]
-    ])
-
-def get_role_choice_keyboard() -> InlineKeyboardMarkup:
-    """Возвращает клавиатуру выбора роли для админа"""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👨‍💼 Войти как Менеджер", callback_data="role_manager")],
-        [InlineKeyboardButton("👑 Войти как Админ", callback_data="role_admin")]
-    ])
-
-# ===== ОБРАБОТЧИКИ КОМАНД =====
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    user_id = update.effective_user.id
-    username = update.effective_user.first_name or "Пользователь"
-
-    # Проверка доступа
-    if user_id not in MANAGERS:
-        logger.warning(f"Отказ в доступе для user_id={user_id}")
-        await update.message.reply_text("❌ У вас нет доступа к этому боту.")
-        return
-
-    # Очистка состояния при старте
-    clear_tel_choice(context)
-    context.user_data.pop("support_mode", None)
-    context.user_data.pop("role", None)
+    app.add_handler(remove_manager_conv)
     
-    # Если админ - предлагаем выбор роли
-    if user_id == ADMIN_ID:
-        logger.info(f"✅ Админ {user_id} ({username}) запустил бота")
-        await update.message.reply_text(
-            f"👋 Привет, {username}!\n\n"
-            f"Вы являетесь администратором.\n"
-            f"Выберите режим работы:",
-            reply_markup=get_role_choice_keyboard()
-        )
-    else:
-        # Обычный менеджер
-        context.user_data["role"] = "manager"
-        logger.info(f"✅ Менеджер {user_id} ({username}) запустил бота")
-        await update.message.reply_text(
-            f"👋 Привет, {username}!\n\n"
-            f"Выберите действие из меню:",
-            reply_markup=get_manager_menu()
-        )
-
-# ===== ВЫБОР РОЛИ ДЛЯ АДМИНА =====
-
-async def role_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора роли администратором"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = update.effective_user.id
-    
-    # Проверка, что это админ
-    if user_id != ADMIN_ID:
-        await query.message.edit_text("❌ У вас нет прав для этого действия.")
-        return
-
-    if query.data == "role_manager":
-        context.user_data["role"] = "manager"
-        logger.info(f"👨‍💼 Админ {user_id} вошёл как менеджер")
-        
-        # Удаляем inline-клавиатуру
-        await query.message.edit_text(
-            "👨‍💼 Вы вошли в режиме менеджера.\n\n"
-            "Выберите действие из меню:",
-            reply_markup=None
-        )
-        
-        # Отправляем обычную клавиатуру отдельным сообщением
-        await query.message.reply_text(
-            "Используйте меню ниже:",
-            reply_markup=get_manager_menu()
-        )
-        
-    elif query.data == "role_admin":
-        context.user_data["role"] = "admin"
-        logger.info(f"👑 Админ {user_id} вошёл как админ")
-        
-        # Удаляем inline-клавиатуру
-        await query.message.edit_text(
-            "👑 Вы вошли в режиме администратора.\n\n"
-            "Выберите действие из меню:",
-            reply_markup=None
-        )
-        
-        # Отправляем обычную клавиатуру отдельным сообщением
-        await query.message.reply_text(
-            "Используйте меню ниже:",
-            reply_markup=get_admin_menu()
-        )
-
-# ===== ОБРАБОТЧИКИ МЕНЮ =====
-
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатий на кнопки меню"""
-    text = update.message.text
-    role = context.user_data.get("role")
-    user_id = update.effective_user.id
-    
-    logger.debug(f"Кнопка '{text}' от user_id={user_id}, роль={role}")
-
-    # Если роль не установлена (например, после рестарта бота)
-    if not role:
-        await update.message.reply_text(
-            "⚠️ Сессия истекла. Пожалуйста, запустите бота заново командой /start"
-        )
-        return
-
-    # Определяем действия для каждой кнопки
-    async def support():
-        context.user_data["support_mode"] = True
-        await update.message.reply_text(
-            "💬 Напишите ваш вопрос для поддержки:\n\n"
-            "(Отправьте следующее сообщение с текстом вопроса)"
-        )
-
-    async def telephony_errors():
-        clear_tel_choice(context)  # Сбрасываем предыдущий выбор
-        await update.message.reply_text(
-            "📞 Выберите телефонию для отправки ошибки:",
-            reply_markup=get_telephony_keyboard()
-        )
-
-    async def useful_links():
-        links_text = (
-            "🔗 <b>Полезные ссылки:</b>\n\n"
-            "1. <a href='https://cabinetsmonster.com/crm/clients/work'>CRM</a>\n"
-            "2. <a href='https://my.pochtabank.ru/login?next=%2F'>Почта банк</a>\n"
-            "3. <a href='https://www.pochta.ru/offices'>Отделения почты</a>"
-        )
-        await update.message.reply_text(links_text, parse_mode="HTML")
-
-    async def stats():
-        await update.message.reply_text(
-            "📊 Статистика по базам:\n\n"
-            "[Здесь будет статистика]\n"
-            "Функция в разработке..."
-        )
-
-    async def bot_management():
-        await update.message.reply_text(
-            "⚙️ Управление ботом:\n\n"
-            "[Здесь будет панель управления]\n"
-            "Функция в разработке..."
-        )
-
-    # Маппинг кнопок на функции
-    MENU_ACTIONS = {
-        "Поддержка": support,
-        "Ошибки телефонии": telephony_errors,
-        "Полезные ссылки": useful_links,
-        "Статистика по базам": stats,
-        "Управление ботом": bot_management,
-    }
-
-    action = MENU_ACTIONS.get(text)
-    if action:
-        await action()
-    else:
-        logger.warning(f"⚠️ Неизвестная команда кнопки: '{text}' от user_id={user_id}")
-        current_menu = get_admin_menu() if role == "admin" else get_manager_menu()
-        await update.message.reply_text(
-            "❓ Неизвестная команда. Используйте кнопки меню.",
-            reply_markup=current_menu
-        )
-
-# ===== ВЫБОР ТЕЛЕФОНИИ =====
-
-async def tel_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора телефонии через inline кнопки"""
-    query = update.callback_query
-    await query.answer()
-
-    try:
-        callback_data = query.data
-        logger.debug(f"Callback data: {callback_data}")
-        
-        if not callback_data.startswith("tel_"):
-            logger.error(f"❌ Неверный формат callback_data: {callback_data}")
-            await query.message.reply_text("⚠️ Ошибка: неверный формат выбора.")
-            return
-
-        tel_code = callback_data.split("_")[1]
-        tel_name = TEL_CODES_REVERSE.get(tel_code)
-        
-        if not tel_name:
-            logger.error(f"❌ Неизвестный код телефонии: {tel_code}")
-            await query.message.reply_text("⚠️ Ошибка: неизвестная телефония.")
-            return
-
-        # Сохраняем выбор
-        context.user_data["chosen_tel"] = tel_name
-        context.user_data["chosen_tel_code"] = tel_code
-        context.user_data["tel_chosen_at"] = datetime.now()
-        
-        logger.info(f"✅ User {update.effective_user.id} выбрал телефонию: {tel_name} ({tel_code})")
-
-        await query.message.edit_text(
-            f"✅ Вы выбрали: <b>{tel_name}</b>\n\n"
-            f"📝 Теперь отправьте описание ошибки\n"
-            f"⏱ Выбор активен {TEL_CHOICE_TIMEOUT} минут.",
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        logger.error(f"❌ Ошибка в tel_choice: {e}", exc_info=True)
-        await query.message.reply_text(
-            "⚠️ Произошла ошибка при выборе телефонии. Попробуйте снова.",
-            reply_markup=get_telephony_keyboard()
-        )
-
-# ===== ОТПРАВКА ОШИБКИ В ГРУППУ =====
-
-async def forward_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пересылает ошибку в соответствующую группу"""
-    user_id = update.effective_user.id
-    username = update.effective_user.first_name or "Пользователь"
-    role = context.user_data.get("role", "manager")
-    
-    # Проверка выбора телефонии
-    tel = context.user_data.get("chosen_tel")
-    tel_code = context.user_data.get("chosen_tel_code")
-    
-    # Проверка timeout
-    if tel and is_tel_choice_expired(context):
-        clear_tel_choice(context)
-        tel = None
-        tel_code = None
-        logger.info(f"⏱ Истёк timeout выбора телефонии для user_id={user_id}")
-
-    if not tel or not tel_code:
-        current_menu = get_admin_menu() if role == "admin" else get_manager_menu()
-        await update.message.reply_text(
-            "⚠️ Сначала выберите телефонию через кнопку 'Ошибки телефонии'",
-            reply_markup=current_menu
-        )
-        return
-
-    group_id = TEL_GROUPS.get(tel)
-    if not group_id:
-        logger.error(f"❌ Не найдена группа для телефонии: {tel}")
-        await update.message.reply_text("⚠️ Ошибка: не назначена группа для этой телефонии.")
-        return
-
-    # Получение текста ошибки
-    error_text = update.message.text or update.message.caption or ""
-    
-    # Валидация текста
-    if len(error_text) > 1000:
-        await update.message.reply_text(
-            "⚠️ Описание ошибки слишком длинное.\n"
-            f"Максимум: 1000 символов\n"
-            f"Сейчас: {len(error_text)} символов"
-        )
-        return
-    
-    if len(error_text.strip()) == 0 and not (update.message.photo or update.message.document):
-        await update.message.reply_text(
-            "⚠️ Описание ошибки не может быть пустым.\n"
-            "Отправьте текст, фото с описанием или документ."
-        )
-        return
-
-    # Формирование сообщения для группы
-    msg = (
-        f"От: {username}"
-        f"\n{error_text}"
+    # Добавление телефонии
+    add_tel_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_telephony_start, pattern="^mgmt_add_tel$")],
+        states={
+            WAITING_TEL_NAME: [MessageHandler(filters.TEXT, add_telephony_name)],
+            WAITING_TEL_CODE: [MessageHandler(filters.TEXT, add_telephony_code)],
+            WAITING_TEL_TYPE: [CallbackQueryHandler(add_telephony_type, pattern="^tel_type_")],
+            WAITING_TEL_GROUP: [MessageHandler(filters.TEXT, add_telephony_group)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
-
-    # Кнопки только для BMW
-    kb = None
-    if tel_code == "bmw":
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Исправлено", callback_data=f"fix_{user_id}_{tel_code}"),
-                InlineKeyboardButton("⏱ 2-3 мин", callback_data=f"wait_{user_id}_{tel_code}")
-            ],
-            [
-                InlineKeyboardButton("⚠️ Неверный формат", callback_data=f"wrong_{user_id}_{tel_code}"),
-                InlineKeyboardButton("✅ Сим ворк", callback_data=f"sim_{user_id}_{tel_code}")
-            ]
-        ])
-
-    try:
-        # Отправка основного сообщения
-        sent_msg = await context.bot.send_message(
-            chat_id=group_id,
-            text=msg,
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-        
-        # Отправка медиа (если есть)
-        if update.message.photo:
-            await context.bot.send_photo(
-                chat_id=group_id,
-                photo=update.message.photo[-1].file_id,
-                reply_to_message_id=sent_msg.message_id
-            )
-            logger.info(f"📸 Отправлено фото к ошибке")
-        elif update.message.document:
-            await context.bot.send_document(
-                chat_id=group_id,
-                document=update.message.document.file_id,
-                reply_to_message_id=sent_msg.message_id
-            )
-            logger.info(f"📎 Отправлен документ к ошибке")
-        
-        logger.info(f"✅ Ошибка отправлена в группу {group_id} от user_id={user_id} ({tel})")
-        
-    except telegram_error.TelegramError as e:
-        logger.error(f"❌ Telegram error при отправке в группу {group_id}: {e}", exc_info=True)
-        await update.message.reply_text(
-            "⚠️ Не удалось отправить ошибку в саппорт.\n"
-            "Попробуйте позже или обратитесь к администратору."
-        )
-        return
-    except Exception as e:
-        logger.error(f"❌ Unexpected error при отправке ошибки: {e}", exc_info=True)
-        await update.message.reply_text("⚠️ Произошла неожиданная ошибка.")
-        return
-
-    # Очистка выбора телефонии и возврат в меню
-    clear_tel_choice(context)
-    current_menu = get_admin_menu() if role == "admin" else get_manager_menu()
+    app.add_handler(add_tel_conv)
     
-    # Разные сообщения для разных телефоний
-    if tel_code == "zvon":
-        response_text = (
-            "✅ Сообщение с ошибкой было отправлено сапортам\n\n"
-            f"Телефония: {tel}\n"
-            "Ответа можете не ожидать❗️❗️ Продолжайте работу."
-        )
-    else:  # bmw
-        response_text = (
-            "✅ Ошибка успешно отправлена в саппорт!\n\n"
-            f"Телефония: {tel}\n"
-            "Ожидайте ответа от службы поддержки❗️❗️"
-        )
-    
-    await update.message.reply_text(
-        response_text,
-        parse_mode="HTML",
-        reply_markup=current_menu
+    # Удаление телефонии
+    remove_tel_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(remove_telephony_start, pattern="^mgmt_remove_tel$")],
+        states={
+            WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT, remove_telephony_process)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
-
-# ===== ОБРАБОТКА ОТВЕТОВ САППОРТА =====
-
-async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатий на кнопки саппорта в группе (только для BMW)"""
-    query = update.callback_query
-    await query.answer()
-
-    try:
-        data = query.data.split("_")
-        if len(data) != 3:
-            raise ValueError(f"Неверный формат callback_data: {query.data}")
-
-        action_code, user_id_str, tel_code = data
-        user_id = int(user_id_str)
-        tel_name = TEL_CODES_REVERSE.get(tel_code, "Unknown")
-
-        # Маппинг действий
-        action_map = {
-            "fix": "✅ Исправлено",
-            "wait": "⏱ Исправление через 2-3 мин",
-            "wrong": "⚠️ Неверный формат",
-            "sim": "✅ Сим ворк"
-        }
-
-        action_text = action_map.get(action_code, "❓ Неизвестное действие")
-        support_user = query.from_user.first_name or "Саппорт"
-        
-        logger.info(f"🔧 Саппорт действие: {action_text} для ошибки от user_id={user_id} ({tel_name}) от {support_user}")
-
-        # Получаем оригинальный текст и добавляем статус
-        original_text = query.message.text_html or query.message.text
-        
-        # Обрезаем если слишком длинно
-        if len(original_text) > 3500:
-            original_text = original_text[:3500] + "..."
-        
-        new_message = (
-            f"{original_text}\n"
-            f"{action_text}\n"
-            f"<b>Обработал:</b> {support_user}"
-        )
-
-        # Отправляем новое сообщение со статусом
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=new_message,
-            parse_mode="HTML"
-        )
-
-        # Удаляем исходное сообщение с кнопками
-        try:
-            await query.message.delete()
-        except telegram_error.TelegramError as e:
-            logger.error(f"⚠️ Не удалось удалить сообщение в группе: {e}")
-
-        # Уведомляем пользователя
-        try:
-            notification = (
-                f"💬 <b>Ответ от саппорта</b>\n\n"
-                f"📞 Телефония: {tel_name}\n"
-                f"Статус: {action_text}"
-            )
-            
-            if action_code == "wrong":
-                notification += "⚠️ Пожалуйста, отправьте ошибку в правильном формате."
-            elif action_code == "wait":
-                notification += "⏱ Ваша проблема будет решена в течение 2-3 минут."
-            else:
-                notification += ""
-            
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=notification,
-                parse_mode="HTML"
-            )
-            logger.info(f"✅ Уведомление отправлено user_id={user_id}")
-        except telegram_error.TelegramError as e:
-            logger.error(f"⚠️ Не удалось уведомить user_id={user_id}: {e}")
-            
-    except ValueError as e:
-        logger.error(f"❌ Ошибка валидации в support_callback: {e}")
-        await query.message.reply_text("⚠️ Ошибка обработки: неверный формат данных.")
-    except Exception as e:
-        logger.error(f"❌ Unexpected error в support_callback: {e}", exc_info=True)
-        await query.message.reply_text("⚠️ Произошла ошибка при обработке ответа.")
-
-# ===== ОБРАБОТКА ПОДДЕРЖКИ =====
-
-async def handle_support_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Обрабатывает вопросы в режиме поддержки"""
-    if not context.user_data.get("support_mode"):
-        return False
-
-    support_msg = (
-        f"💬 <b>Вопрос в поддержку</b>\n\n"
-        f"👤 От: {update.effective_user.first_name}\n"
-        f"🆔 ID: {update.effective_user.id}\n"
-        f"{'─' * 30}\n"
-        f"📝 Вопрос:\n{update.message.text}"
+    app.add_handler(remove_tel_conv)
+    
+    # Рассылка
+    broadcast_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(broadcast_start, pattern="^mgmt_broadcast$")],
+        states={
+            WAITING_BROADCAST_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_process)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        # ✅ Убрано per_message
     )
+    app.add_handler(broadcast_conv)
     
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=support_msg,
-            parse_mode="HTML"
-        )
-        role = context.user_data.get("role", "manager")
-        current_menu = get_admin_menu() if role == "admin" else get_manager_menu()
-        
-        await update.message.reply_text(
-            "✅ Ваш вопрос отправлен в поддержку!\n"
-            "Ожидайте ответа от администратора.",
-            reply_markup=current_menu
-        )
-        logger.info(f"✅ Вопрос в поддержку от user_id={update.effective_user.id}")
-    except telegram_error.TelegramError as e:
-        logger.error(f"❌ Ошибка отправки в поддержку: {e}", exc_info=True)
-        await update.message.reply_text(
-            "⚠️ Не удалось отправить вопрос.\n"
-            "Попробуйте позже."
-        )
+    # ✅ ConversationHandler для BMW (уже исправлен в quick_errors.py)
+    app.add_handler(quick_bmw_conv)
     
-    context.user_data["support_mode"] = False
-    return True
-
-# ===== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ =====
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главный обработчик всех текстовых сообщений"""
-    user_id = update.effective_user.id
+    # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
     
-    # Проверка доступа
-    if user_id not in MANAGERS:
-        return
-
-    text = update.message.text
-    if not text:
-        return
-
-    logger.debug(f"📨 Сообщение от user_id={user_id}: '{text[:50]}...'")
-
-    # Проверка режима поддержки
-    if await handle_support_mode(update, context):
-        return
-
-    # Проверка на служебные кнопки меню
-    all_menu_texts = {
-        "Ошибки телефонии", "Полезные ссылки", "Поддержка",
-        "Статистика по базам", "Управление ботом"
-    }
-
-    if text in all_menu_texts:
-        await menu_handler(update, context)
-    else:
-        # Если не кнопка - считаем описанием ошибки
-        await forward_error(update, context)
-
-# ===== FALLBACK ДЛЯ CALLBACK =====
-
-async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback запросов"""
-    query = update.callback_query
-    logger.warning(f"⚠️ Неизвестный callback: {query.data} от user_id={query.from_user.id}")
-    await query.answer()
+    app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"))
+    app.add_handler(CallbackQueryHandler(managers_menu, pattern="^mgmt_managers$"))
+    app.add_handler(CallbackQueryHandler(list_managers, pattern="^mgmt_list_managers$"))
+    app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"))
+    app.add_handler(CallbackQueryHandler(list_telephonies, pattern="^mgmt_list_tel$"))
+    app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="^broadcast_confirm$"))
     
-    role = context.user_data.get("role", "manager")
-    current_menu = get_admin_menu() if role == "admin" else get_manager_menu()
+    # ===== CALLBACK HANDLERS ДЛЯ СТАТИСТИКИ ОШИБОК =====
     
-    await query.message.reply_text(
-        "⚠️ Неизвестная команда. Попробуйте снова.",
-        reply_markup=current_menu
-    )
-
-# ===== ОБРАБОТЧИК ОШИБОК =====
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Глобальный обработчик ошибок"""
-    logger.error(f"❌ Exception while handling an update: {context.error}", exc_info=context.error)
+    app.add_handler(CallbackQueryHandler(show_errors_stats_menu, pattern="^stats_menu$"))
     
-    try:
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "⚠️ Произошла ошибка при обработке вашего запроса.\n"
-                "Попробуйте снова или обратитесь в поддержку."
-            )
-    except Exception as e:
-        logger.error(f"❌ Ошибка при отправке сообщения об ошибке: {e}")
+    # Дашборд
+    app.add_handler(CallbackQueryHandler(show_dashboard_start, pattern="^dash_start_"))
+    app.add_handler(CallbackQueryHandler(show_dashboard_page, pattern="^dash_page_"))
+    
+    # Старые обработчики (обратная совместимость)
+    app.add_handler(CallbackQueryHandler(show_general_stats, pattern="^stats_general$"))
+    app.add_handler(CallbackQueryHandler(show_general_stats_period, pattern="^stats_gen_"))
+    app.add_handler(CallbackQueryHandler(show_managers_stats, pattern="^stats_managers$"))
+    app.add_handler(CallbackQueryHandler(show_managers_stats_period, pattern="^stats_mgr_"))
+    app.add_handler(CallbackQueryHandler(show_support_stats, pattern="^stats_support$"))
+    app.add_handler(CallbackQueryHandler(show_support_stats_period, pattern="^stats_sup_"))
+    app.add_handler(CallbackQueryHandler(show_response_time_stats, pattern="^stats_response_time$"))
+    app.add_handler(CallbackQueryHandler(show_response_time_stats_period, pattern="^stats_time_"))
+    
+    # ===== ОСНОВНЫЕ CALLBACK ОБРАБОТЧИКИ =====
+    
+    app.add_handler(CallbackQueryHandler(role_choice_callback, pattern="^role_"))
+    app.add_handler(CallbackQueryHandler(tel_choice_callback, pattern="^tel_"))
+    app.add_handler(CallbackQueryHandler(support_callback, pattern="^(fix|wait|wrong|sim)_"))
+    app.add_handler(CallbackQueryHandler(fallback_callback))
+    
+    # Обработчик сообщений
+    app.add_handler(MessageHandler(
+        filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        message_handler
+    ))
+    
+    # Обработчик ошибок
+    app.add_error_handler(error_handler)
 
-# ===== MAIN =====
 
 def main():
     """Главная функция запуска бота"""
     try:
         logger.info("🚀 Запуск бота...")
-        logger.info(f"📋 Менеджеров в системе: {len(MANAGERS)}")
-        logger.info(f"👑 Admin ID: {ADMIN_ID}")
-        logger.info(f"📞 Телефонии: {', '.join(TEL_GROUPS.keys())}")
+        logger.info(f"📋 Менеджеров в системе: {len(settings.MANAGERS)}")
+        logger.info(f"👑 Admin ID: {settings.ADMIN_ID}")
+        
+        # Инициализация БД
+        from database.models import db
+        logger.info("✅ База данных инициализирована")
         
         # Создание приложения
-        app = Application.builder().token(TOKEN).build()
-
-        # Регистрация обработчиков (порядок важен!)
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CallbackQueryHandler(role_choice, pattern="^role_"))
-        app.add_handler(CallbackQueryHandler(tel_choice, pattern="^tel_"))
-        app.add_handler(CallbackQueryHandler(support_callback, pattern="^(fix|wait|wrong|sim)_"))
-        app.add_handler(CallbackQueryHandler(fallback_callback))
-        app.add_handler(MessageHandler(
-            filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
-            message_handler
-        ))
+        app = Application.builder().token(settings.BOT_TOKEN).build()
         
-        # Регистрация обработчика ошибок
-        app.add_error_handler(error_handler)
-
+        # Регистрация обработчиков
+        register_handlers(app)
+        
         logger.info("✅ Бот успешно запущен и готов к работе!")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # ===== ЗАПУСК ПЛАНИРОВЩИКА (ПОСЛЕ РЕГИСТРАЦИИ ОБРАБОТЧИКОВ) =====
+        try:
+            from services.scheduler_service import scheduler_service
+            
+            # ✅ НОВОЕ: Передаём экземпляр бота для отправки уведомлений
+            scheduler_service.set_bot(app.bot)
+            
+            if not scheduler_service.scheduler.running:
+                scheduler_service.start()
+                logger.info("✅ Планировщик задач настроен")
+            else:
+                logger.info("✅ Планировщик уже запущен")
+        except Exception as e:
+            logger.warning(f"⚠️ Планировщик не запущен: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+        # ===================================
+        
+        # Запуск polling (блокирует выполнение)
+        app.run_polling(
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True
+        )
         
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при запуске бота: {e}", exc_info=True)
         raise
+    finally:
+        # Останавливаем планировщик при выключении
+        try:
+            from services.scheduler_service import scheduler_service
+            scheduler_service.stop()
+        except:
+            pass
+
 
 if __name__ == "__main__":
     main()
