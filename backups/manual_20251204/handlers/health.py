@@ -1,11 +1,5 @@
 """
-РАСШИРЕНО: handlers/health.py
-Добавлена проверка системы быстрых ошибок BMW
-
-ИЗМЕНЕНИЯ:
-✅ Добавлен _check_bmw_system()
-✅ Статистика SIP менеджеров
-✅ Проверка ConversationHandler
+Health Check команда для мониторинга состояния бота
 """
 from datetime import datetime
 import os
@@ -18,9 +12,17 @@ from utils.logger import logger
 
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /health - показывает состояние всех компонентов бота"""
+    """
+    Команда /health - показывает состояние всех компонентов бота
+    Доступна только для администраторов
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
     user_id = update.effective_user.id
     
+    # Проверка прав администратора
     if not user_service.is_admin(user_id):
         await update.message.reply_text("❌ Эта команда доступна только администраторам.")
         return
@@ -29,9 +31,13 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("🔍 Проверка состояния компонентов...\nЭто может занять несколько секунд.")
     
+    # Собираем информацию о всех компонентах
     health_status = await _collect_health_status()
+    
+    # Форматируем сообщение
     message = _format_health_message(health_status)
     
+    # Отправляем
     await update.message.reply_text(message, parse_mode="HTML")
 
 
@@ -43,12 +49,20 @@ async def _collect_health_status() -> dict:
         "components": {}
     }
     
+    # 1. База данных
     status["components"]["database"] = _check_database()
+    
+    # 2. Планировщик
     status["components"]["scheduler"] = _check_scheduler()
+    
+    # 3. Google Sheets
     status["components"]["google_sheets"] = _check_google_sheets()
+    
+    # 4. Система (диск, память)
     status["components"]["system"] = _check_system()
+    
+    # 5. Статистика бота
     status["components"]["bot_stats"] = _check_bot_stats()
-    status["components"]["bmw_system"] = _check_bmw_system()  # ✅ НОВОЕ
     
     return status
 
@@ -59,18 +73,23 @@ def _check_database() -> dict:
         conn = db._get_connection()
         cursor = conn.cursor()
         
+        # Проверка доступности БД
         cursor.execute("SELECT 1")
         
+        # Получаем размер БД
         cursor.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
         db_size = cursor.fetchone()[0]
         db_size_mb = db_size / (1024 * 1024)
         
+        # Количество таблиц
         cursor.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
         tables_count = cursor.fetchone()[0]
         
+        # Количество индексов
         cursor.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index'")
         indexes_count = cursor.fetchone()[0]
         
+        # Количество записей в основных таблицах
         cursor.execute("SELECT COUNT(*) FROM managers")
         managers_count = cursor.fetchone()[0]
         
@@ -115,11 +134,13 @@ def _check_scheduler() -> dict:
                 "details": stats
             }
         
+        # Проверяем consecutive_errors
         if stats['consecutive_errors'] >= 3:
             status = "⚠️ Warning"
         else:
             status = "✅ Running"
         
+        # Получаем время следующего обновления
         next_update = scheduler_service.get_next_run_time('update_stats')
         
         return {
@@ -160,7 +181,10 @@ def _check_google_sheets() -> dict:
                 "error": "Spreadsheet not opened"
             }
         
+        # Пробуем получить название таблицы
         title = google_sheets_service.spreadsheet.title
+        
+        # Получаем список листов
         worksheets = google_sheets_service.spreadsheet.worksheets()
         
         return {
@@ -185,15 +209,20 @@ def _check_system() -> dict:
     try:
         import psutil
         
+        # CPU
         cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Память
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
         memory_available_mb = memory.available / (1024 * 1024)
         
+        # Диск
         disk = psutil.disk_usage('/')
         disk_percent = disk.percent
         disk_free_gb = disk.free / (1024 * 1024 * 1024)
         
+        # Определяем статус
         if cpu_percent > 80 or memory_percent > 90 or disk_percent > 90:
             status = "⚠️ High Load"
         else:
@@ -229,6 +258,7 @@ def _check_bot_stats() -> dict:
         conn = db._get_connection()
         cursor = conn.cursor()
         
+        # Ошибки за сегодня
         cursor.execute("""
             SELECT COUNT(*) 
             FROM error_reports 
@@ -236,6 +266,7 @@ def _check_bot_stats() -> dict:
         """)
         errors_today = cursor.fetchone()[0]
         
+        # Решённые ошибки за сегодня
         cursor.execute("""
             SELECT COUNT(*) 
             FROM error_reports 
@@ -243,6 +274,7 @@ def _check_bot_stats() -> dict:
         """)
         resolved_today = cursor.fetchone()[0]
         
+        # Среднее время ответа за сегодня
         cursor.execute("""
             SELECT AVG(response_time_seconds) 
             FROM error_reports 
@@ -272,72 +304,6 @@ def _check_bot_stats() -> dict:
         
     except Exception as e:
         logger.error(f"❌ Ошибка получения статистики бота: {e}")
-        return {
-            "status": "❌ Error",
-            "error": str(e)
-        }
-
-
-def _check_bmw_system() -> dict:
-    """
-    ✅ НОВОЕ: Проверяет состояние системы быстрых ошибок BMW
-    
-    Returns:
-        Словарь со статусом и деталями
-    """
-    try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-        
-        # Общее количество SIP
-        cursor.execute("SELECT COUNT(*) FROM manager_sips")
-        total_sips = cursor.fetchone()[0]
-        
-        # SIP указанные сегодня
-        cursor.execute("""
-            SELECT COUNT(*) FROM manager_sips 
-            WHERE last_updated = DATE('now')
-        """)
-        sips_today = cursor.fetchone()[0]
-        
-        # SIP указанные вчера (не обновлённые)
-        cursor.execute("""
-            SELECT COUNT(*) FROM manager_sips 
-            WHERE last_updated < DATE('now')
-        """)
-        sips_outdated = cursor.fetchone()[0]
-        
-        # Быстрые ошибки за сегодня (SIP: в description)
-        cursor.execute("""
-            SELECT COUNT(*) FROM error_reports
-            WHERE telephony_code = 'bmw'
-            AND description LIKE 'SIP:%'
-            AND DATE(created_at) = DATE('now')
-        """)
-        quick_errors_today = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        # Определяем статус
-        if total_sips == 0:
-            status = "⚠️ No SIPs"
-        elif sips_today > 0:
-            status = "✅ Active"
-        else:
-            status = "⚠️ No activity today"
-        
-        return {
-            "status": status,
-            "details": {
-                "total_sips": total_sips,
-                "sips_today": sips_today,
-                "sips_outdated": sips_outdated,
-                "quick_errors_today": quick_errors_today
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка проверки BMW системы: {e}")
         return {
             "status": "❌ Error",
             "error": str(e)
@@ -402,19 +368,6 @@ def _format_health_message(health_status: dict) -> str:
         message += f"   Диск: {d['disk_percent']}% (свободно: {d['disk_free_gb']} GB)\n"
     elif 'error' in sys_info:
         message += f"   ⚠️ {sys_info['error']}\n"
-    message += "\n"
-    
-    # ✅ НОВОЕ: BMW система
-    bmw_info = components["bmw_system"]
-    message += f"🔵 <b>BMW Быстрые ошибки:</b> {bmw_info['status']}\n"
-    if 'details' in bmw_info:
-        d = bmw_info['details']
-        message += f"   Всего SIP: {d['total_sips']}\n"
-        message += f"   Указано сегодня: {d['sips_today']}\n"
-        message += f"   Устаревших: {d['sips_outdated']}\n"
-        message += f"   Быстрых ошибок сегодня: {d['quick_errors_today']}\n"
-    elif 'error' in bmw_info:
-        message += f"   ⚠️ {bmw_info['error']}\n"
     message += "\n"
     
     # Статистика бота

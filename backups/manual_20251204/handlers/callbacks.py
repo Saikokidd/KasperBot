@@ -1,10 +1,9 @@
 """
-УЛУЧШЕНО: handlers/callbacks.py
-Добавлено подробное логирование для диагностики
+ФИНАЛЬНАЯ ВЕРСИЯ: handlers/callbacks.py
+Обработчики callback запросов (inline кнопки)
 
-ИЗМЕНЕНИЯ:
-✅ Логируются все входящие callback_query
-✅ Добавлены debug логи для отладки
+ИСПРАВЛЕНИЯ:
+✅ Добавлен closing() для безопасного закрытия соединений БД
 ✅ Улучшена обработка ошибок
 """
 from datetime import datetime
@@ -22,18 +21,20 @@ from utils.logger import logger
 
 
 async def role_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора роли администратором"""
+    """
+    Обработчик выбора роли администратором
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
     query = update.callback_query
-    user_id = update.effective_user.id
-    
-    # ✅ НОВОЕ: Логирование
-    logger.info(f"🎭 Выбор роли от user_id={user_id}: {query.data}")
-    
     await query.answer()
+    
+    user_id = update.effective_user.id
     
     # Проверка, что это админ
     if not user_service.is_admin(user_id):
-        logger.warning(f"⚠️ Попытка выбора роли не-админом: user_id={user_id}")
         await query.message.edit_text("❌ У вас нет прав для этого действия.")
         return
     
@@ -69,25 +70,26 @@ async def role_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора телефонии через inline кнопки"""
+    """
+    Обработчик выбора телефонии через inline кнопки
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
     query = update.callback_query
-    user_id = update.effective_user.id
-    
-    # ✅ НОВОЕ: Подробное логирование
-    logger.debug(f"📞 Callback телефонии от user_id={user_id}: {query.data}")
-    
     await query.answer()
     
     try:
         callback_data = query.data
+        logger.debug(f"Callback data: {callback_data}")
         
         if not callback_data.startswith("tel_"):
-            logger.error(f"❌ Неверный формат callback_data: {callback_data} от user_id={user_id}")
+            logger.error(f"❌ Неверный формат callback_data: {callback_data}")
             await query.message.reply_text("⚠️ Ошибка: неверный формат выбора.")
             return
         
         tel_code = callback_data.split("_")[1]
-        logger.debug(f"📞 Извлечён код телефонии: {tel_code}")
         
         # Получаем название из БД
         from database.models import db
@@ -95,21 +97,19 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         if tel:
             tel_name = tel['name']
-            logger.debug(f"✅ Найдена телефония в БД: {tel_name}")
         else:
             # Фоллбэк на старые
             tel_name = TEL_CODES_REVERSE.get(tel_code)
-            logger.debug(f"⚠️ Телефония не в БД, используем fallback: {tel_name}")
         
         if not tel_name:
-            logger.error(f"❌ Неизвестный код телефонии: {tel_code} от user_id={user_id}")
+            logger.error(f"❌ Неизвестный код телефонии: {tel_code}")
             await query.message.reply_text("⚠️ Ошибка: неизвестная телефония.")
             return
         
         # Сохраняем выбор
         set_tel_choice(context, tel_name, tel_code)
         
-        logger.info(f"✅ User {user_id} выбрал телефонию: {tel_name} ({tel_code})")
+        logger.info(f"✅ User {update.effective_user.id} выбрал телефонию: {tel_name} ({tel_code})")
         
         await query.message.edit_text(
             f"✅ Вы выбрали: <b>{tel_name}</b>\n\n"
@@ -118,7 +118,7 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="HTML"
         )
     except Exception as e:
-        logger.error(f"❌ Ошибка в tel_choice_callback от user_id={user_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка в tel_choice: {e}", exc_info=True)
         await query.message.reply_text(
             "⚠️ Произошла ошибка при выборе телефонии. Попробуйте снова.",
             reply_markup=get_telephony_keyboard()
@@ -126,13 +126,16 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатий на кнопки саппорта в группе"""
+    """
+    Обработчик нажатий на кнопки саппорта в группе (только для белых телефоний)
+    
+    ✅ ИСПРАВЛЕНО: Добавлен closing() для безопасного закрытия соединений
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
     query = update.callback_query
-    support_user_id = query.from_user.id
-    
-    # ✅ НОВОЕ: Логирование
-    logger.debug(f"🔧 Support callback от user_id={support_user_id}: {query.data}")
-    
     await query.answer()
     
     try:
@@ -143,24 +146,24 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action_code, user_id_str, tel_code = data
         user_id = int(user_id_str)
         
-        logger.info(f"🔧 Support действие: {action_code} для user_id={user_id} от саппорта={support_user_id}")
-        
         # Получаем название телефонии
         from database.models import db
         tel = db.get_telephony_by_code(tel_code)
         tel_name = tel['name'] if tel else TEL_CODES_REVERSE.get(tel_code, "Unknown")
         
         action_text = SUPPORT_ACTIONS.get(action_code, "❓ Неизвестное действие")
+        support_user_id = query.from_user.id
         support_username = query.from_user.username or query.from_user.first_name or "Саппорт"
         
-        logger.info(f"🔧 Действие: {action_text} для {tel_name} от {support_username}")
+        logger.info(f"🔧 Саппорт действие: {action_text} для ошибки от user_id={user_id} ({tel_name}) от {support_username}")
         
-        # Сохранение в БД для аналитики
+        # ===== СОХРАНЕНИЕ В БД ДЛЯ АНАЛИТИКИ =====
         try:
+            # ✅ ИСПРАВЛЕНО: Используем closing() для автоматического закрытия
             with closing(db._get_connection()) as conn:
                 cursor = conn.cursor()
                 
-                # Находим последнюю необработанную ошибку
+                # Находим последнюю необработанную ошибку от этого пользователя
                 cursor.execute(
                     """
                     SELECT id, created_at FROM error_reports 
@@ -176,12 +179,14 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     error_id = error_record[0]
                     created_at_str = error_record[1]
                     
+                    # Парсим время создания
                     try:
+                        # SQLite возвращает timestamp в формате YYYY-MM-DD HH:MM:SS
                         created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
                         resolved_at = datetime.now()
                         response_time = int((resolved_at - created_at).total_seconds())
                     except Exception as e:
-                        logger.error(f"⚠️ Ошибка парсинга времени: {e}")
+                        logger.error(f"Ошибка парсинга времени: {e}")
                         response_time = None
                         resolved_at = datetime.now()
                     
@@ -208,6 +213,8 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(f"✅ Ошибка #{error_id} обновлена в БД (время ответа: {minutes}м {seconds}с)")
                 else:
                     logger.warning(f"⚠️ Не найдена необработанная ошибка для user_id={user_id}, tel_code={tel_code}")
+                
+                # ✅ Соединение автоматически закроется благодаря closing()
             
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
@@ -215,6 +222,7 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем оригинальный текст и добавляем статус
         original_text = query.message.text_html or query.message.text
         
+        # Обрезаем если слишком длинно
         if len(original_text) > 3500:
             original_text = original_text[:3500] + "..."
         
@@ -224,14 +232,13 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<b>Обработал:</b> {support_username}"
         )
         
-        # Редактируем сообщение
+        # Редактируем текущее сообщение (убираем кнопки и добавляем статус)
         try:
             await query.message.edit_text(
                 text=new_message,
                 parse_mode="HTML",
-                reply_markup=None
+                reply_markup=None  # Убираем кнопки
             )
-            logger.debug(f"✅ Сообщение отредактировано в группе")
         except telegram_error.TelegramError as e:
             logger.error(f"⚠️ Не удалось отредактировать сообщение: {e}")
         
@@ -266,15 +273,15 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback запросов"""
+    """
+    Обработчик неизвестных callback запросов
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
     query = update.callback_query
-    user_id = query.from_user.id
-    
-    # ✅ НОВОЕ: Подробное логирование неизвестных callback
-    logger.warning(f"⚠️ Неизвестный callback от user_id={user_id}: {query.data}")
-    logger.debug(f"   Message ID: {query.message.message_id if query.message else 'None'}")
-    logger.debug(f"   Chat ID: {query.message.chat_id if query.message else 'None'}")
-    
+    logger.warning(f"⚠️ Неизвестный callback: {query.data} от user_id={query.from_user.id}")
     await query.answer()
     
     role = get_user_role(context)

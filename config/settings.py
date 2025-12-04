@@ -1,5 +1,12 @@
 """
-Конфигурация бота: загрузка переменных окружения и валидация
+УЛУЧШЕНО: config/settings.py
+Добавлена полная валидация всех переменных окружения
+
+ИЗМЕНЕНИЯ:
+✅ Валидация GOOGLE_APPS_SCRIPT_URL
+✅ Валидация GOOGLE_SHEETS_ID
+✅ Проверка формата ID групп
+✅ Улучшенные сообщения об ошибках
 """
 import os
 from dotenv import load_dotenv
@@ -18,9 +25,10 @@ class Settings:
         self._parse_managers()
         self._parse_admins()
         self._parse_pult()
+        self._validate_optional_env()
     
     def _validate_env(self):
-        """Проверка наличия всех необходимых переменных окружения"""
+        """Проверка наличия всех ОБЯЗАТЕЛЬНЫХ переменных окружения"""
         required = {
             "BOT_TOKEN": os.getenv("BOT_TOKEN"),
             "ADMIN_ID": os.getenv("ADMIN_ID"),
@@ -30,7 +38,55 @@ class Settings:
         
         missing = [key for key, value in required.items() if not value]
         if missing:
-            raise ValueError(f"❌ Отсутствуют переменные в .env: {', '.join(missing)}")
+            raise ValueError(f"❌ Отсутствуют ОБЯЗАТЕЛЬНЫЕ переменные в .env: {', '.join(missing)}")
+        
+        # ✅ НОВОЕ: Валидация формата токена
+        bot_token = os.getenv("BOT_TOKEN")
+        if not bot_token or ":" not in bot_token:
+            raise ValueError("❌ Неверный формат BOT_TOKEN (должен быть вида: 123456789:ABC...)")
+        
+        # ✅ НОВОЕ: Валидация ID групп (должны начинаться с "-")
+        bmw_group = os.getenv("BMW_GROUP_ID")
+        zvon_group = os.getenv("ZVONARI_GROUP_ID")
+        
+        if not bmw_group.startswith("-"):
+            raise ValueError(f"❌ BMW_GROUP_ID должен начинаться с '-' (сейчас: {bmw_group})")
+        
+        if not zvon_group.startswith("-"):
+            raise ValueError(f"❌ ZVONARI_GROUP_ID должен начинаться с '-' (сейчас: {zvon_group})")
+    
+    def _validate_optional_env(self):
+        """
+        ✅ НОВОЕ: Проверка опциональных переменных окружения
+        Выводит предупреждения если они не настроены
+        """
+        from utils.logger import logger
+        
+        warnings = []
+        
+        # Google Sheets URL
+        if not self.GOOGLE_APPS_SCRIPT_URL:
+            warnings.append("GOOGLE_APPS_SCRIPT_URL не настроен - статистика трубок не будет работать")
+        elif not (self.GOOGLE_APPS_SCRIPT_URL.startswith("http://") or 
+                  self.GOOGLE_APPS_SCRIPT_URL.startswith("https://")):
+            warnings.append(f"GOOGLE_APPS_SCRIPT_URL имеет неверный формат: {self.GOOGLE_APPS_SCRIPT_URL}")
+        
+        # Google Sheets ID
+        google_sheets_id = os.getenv("GOOGLE_SHEETS_ID")
+        if not google_sheets_id:
+            warnings.append("GOOGLE_SHEETS_ID не настроен - автообновление статистики не будет работать")
+        
+        # Google Credentials
+        google_creds = os.getenv("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
+        if not os.path.exists(google_creds):
+            warnings.append(f"Файл {google_creds} не найден - Google Sheets интеграция не будет работать")
+        
+        # Выводим предупреждения
+        if warnings:
+            logger.warning("⚠️ Обнаружены проблемы с конфигурацией:")
+            for warning in warnings:
+                logger.warning(f"   • {warning}")
+            logger.warning("⚠️ Некоторые функции могут быть недоступны")
     
     def _load_env(self):
         """Загрузка переменных окружения"""
@@ -97,7 +153,44 @@ class Settings:
             "BMW": self.BMW_GROUP_ID,
             "Звонари": self.ZVONARI_GROUP_ID
         }
+    
+    def validate_runtime(self) -> List[str]:
+        """
+        ✅ НОВОЕ: Проверка конфигурации во время работы
+        
+        Returns:
+            Список проблем (пустой если всё ОК)
+        """
+        issues = []
+        
+        # Проверка доступности групп (можно расширить)
+        if self.BMW_GROUP_ID == self.ZVONARI_GROUP_ID:
+            issues.append("BMW_GROUP_ID и ZVONARI_GROUP_ID одинаковые!")
+        
+        # Проверка что есть хотя бы один менеджер
+        if not self.MANAGERS:
+            issues.append("Нет ни одного менеджера в системе!")
+        
+        # Проверка что есть хотя бы один админ
+        if not self.ADMINS:
+            issues.append("Нет ни одного админа в системе!")
+        
+        return issues
 
 
 # Создаём глобальный экземпляр настроек
-settings = Settings()
+try:
+    settings = Settings()
+    
+    # ✅ НОВОЕ: Проверяем runtime проблемы
+    runtime_issues = settings.validate_runtime()
+    if runtime_issues:
+        from utils.logger import logger
+        logger.warning("⚠️ Обнаружены проблемы конфигурации:")
+        for issue in runtime_issues:
+            logger.warning(f"   • {issue}")
+except Exception as e:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить настройки!")
+    print(f"   Причина: {e}")
+    print(f"   Проверьте файл .env и убедитесь что все обязательные переменные установлены")
+    raise
