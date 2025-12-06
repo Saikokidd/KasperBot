@@ -1,14 +1,7 @@
 """
-УЛУЧШЕНО: utils/state.py
-Добавлены type hints и валидация
-
-ИЗМЕНЕНИЯ:
-✅ Добавлены type hints для всех функций
-✅ Добавлена валидация входных параметров
-✅ Улучшена документация
+Утилиты для управления состоянием пользователя
 """
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
 from telegram.ext import ContextTypes
 from config.constants import TEL_CHOICE_TIMEOUT
 
@@ -29,7 +22,7 @@ def is_tel_choice_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return datetime.now() - chosen_at > timedelta(minutes=TEL_CHOICE_TIMEOUT)
 
 
-def clear_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> None:
+def clear_tel_choice(context: ContextTypes.DEFAULT_TYPE):
     """
     Очищает данные выбора телефонии
     
@@ -41,7 +34,7 @@ def clear_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("tel_chosen_at", None)
 
 
-def clear_all_states(context: ContextTypes.DEFAULT_TYPE) -> None:
+def clear_all_states(context: ContextTypes.DEFAULT_TYPE):
     """
     Очищает все состояния пользователя
     
@@ -61,31 +54,23 @@ def get_user_role(context: ContextTypes.DEFAULT_TYPE) -> str:
         context: Контекст пользователя
         
     Returns:
-        Роль пользователя ("manager", "admin" или "pult")
+        Роль пользователя ("manager" или "admin")
     """
     return context.user_data.get("role", "manager")
 
 
-def set_user_role(context: ContextTypes.DEFAULT_TYPE, role: str) -> None:
+def set_user_role(context: ContextTypes.DEFAULT_TYPE, role: str):
     """
     Устанавливает роль пользователя
     
     Args:
         context: Контекст пользователя
-        role: Роль ("manager", "admin" или "pult")
-        
-    Raises:
-        ValueError: Если роль неизвестна
+        role: Роль ("manager" или "admin")
     """
-    # ✅ НОВОЕ: Валидация роли
-    valid_roles = {"manager", "admin", "pult"}
-    if role not in valid_roles:
-        raise ValueError(f"Неизвестная роль: {role}. Допустимые: {valid_roles}")
-    
     context.user_data["role"] = role
 
 
-def set_support_mode(context: ContextTypes.DEFAULT_TYPE, enabled: bool) -> None:
+def set_support_mode(context: ContextTypes.DEFAULT_TYPE, enabled: bool):
     """
     Включает/выключает режим поддержки
     
@@ -112,11 +97,7 @@ def is_support_mode(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return context.user_data.get("support_mode", False)
 
 
-def set_tel_choice(
-    context: ContextTypes.DEFAULT_TYPE, 
-    tel_name: str, 
-    tel_code: str
-) -> None:
+def set_tel_choice(context: ContextTypes.DEFAULT_TYPE, tel_name: str, tel_code: str):
     """
     Сохраняет выбор телефонии
     
@@ -124,23 +105,13 @@ def set_tel_choice(
         context: Контекст пользователя
         tel_name: Название телефонии (BMW, Звонари)
         tel_code: Код телефонии (bmw, zvon)
-        
-    Raises:
-        ValueError: Если tel_name или tel_code пустые
     """
-    # ✅ НОВОЕ: Валидация параметров
-    if not tel_name or not tel_name.strip():
-        raise ValueError("tel_name не может быть пустым")
-    
-    if not tel_code or not tel_code.strip():
-        raise ValueError("tel_code не может быть пустым")
-    
-    context.user_data["chosen_tel"] = tel_name.strip()
-    context.user_data["chosen_tel_code"] = tel_code.strip()
+    context.user_data["chosen_tel"] = tel_name
+    context.user_data["chosen_tel_code"] = tel_code
     context.user_data["tel_chosen_at"] = datetime.now()
 
 
-def get_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[str], Optional[str]]:
+def get_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> tuple:
     """
     Получает текущий выбор телефонии
     
@@ -148,12 +119,7 @@ def get_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[str], O
         context: Контекст пользователя
         
     Returns:
-        Кортеж (tel_name, tel_code) или (None, None) если не выбрано
-        
-    Examples:
-        >>> tel_name, tel_code = get_tel_choice(context)
-        >>> if tel_name:
-        ...     print(f"Выбрана телефония: {tel_name}")
+        Кортеж (tel_name, tel_code) или (None, None)
     """
     tel = context.user_data.get("chosen_tel")
     tel_code = context.user_data.get("chosen_tel_code")

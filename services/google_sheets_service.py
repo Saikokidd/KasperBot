@@ -2,12 +2,13 @@
 Автоматическое обновление статистики менеджеров
 
 ИЗМЕНЕНИЯ:
-✅ PAVLOGRAD_MANAGERS и NAME_MAP импортируются из constants.py
-✅ Убрано дублирование кода
+✅ update_stats() разбита на подфункции (легче читать и поддерживать)
+✅ Каждая подфункция решает одну задачу
+✅ Добавлены type hints
 """
 import os
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import pytz
 from dotenv import load_dotenv
 from oauth2client.service_account import ServiceAccountCredentials
@@ -16,7 +17,7 @@ from gspread.exceptions import WorksheetNotFound, APIError
 
 from utils.logger import logger
 from config.settings import settings
-from config.constants import PAVLOGRAD_MANAGERS, NAME_MAP  # ✅ ИМПОРТ ИЗ КОНСТАНТ
+from config.constants import PAVLOGRAD_MANAGERS, NAME_MAP
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -40,7 +41,6 @@ API_RETRY_CONFIG = {
     'before_sleep': before_sleep_log(logger, logging.WARNING)
 }
 
-# Загрузка .env файла
 load_dotenv()
 
 
@@ -91,7 +91,7 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка авторизации Google Sheets: {e}")
             return False
     
-    def _get_week_range(self, date: datetime) -> tuple:
+    def _get_week_range(self, date: datetime) -> Tuple[datetime, datetime]:
         """Получить диапазон недели (понедельник-суббота)"""
         start = date - timedelta(days=date.weekday())
         end = start + timedelta(days=5)
@@ -140,40 +140,8 @@ class GoogleSheetsService:
             
             worksheet.update('A1:I1', headers)
             
-            # Форматирование заголовков
-            worksheet.format('A1:I1', {
-                "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
-                "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}, "bold": True},
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE"
-            })
-            
-            # Ширина колонок
-            body = {
-                "requests": [
-                    {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 40}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 120}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 9}, "properties": {"pixelSize": 70}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 50}, "fields": "pixelSize"}},
-                ]
-            }
-            self.spreadsheet.batch_update(body)
-            
-            # Центрирование
-            worksheet.format('A:I', {
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE"
-            })
-            
-            # Рамки
-            worksheet.format('A1:I100', {
-                "borders": {
-                    "top": {"style": "SOLID"},
-                    "bottom": {"style": "SOLID"},
-                    "left": {"style": "SOLID"},
-                    "right": {"style": "SOLID"}
-                }
-            })
+            # Применяем форматирование
+            self._format_worksheet_headers(worksheet)
             
             logger.info(f"✅ Заголовки и форматирование применены к листу '{title}'")
             return worksheet
@@ -182,22 +150,58 @@ class GoogleSheetsService:
             logger.error(f"❌ Ошибка создания листа: {e}")
             return None
     
+    def _format_worksheet_headers(self, worksheet) -> None:
+        """
+        ✅ НОВОЕ: Применить форматирование к заголовкам листа
+        
+        Args:
+            worksheet: Объект worksheet для форматирования
+        """
+        # Заголовки: синий фон, белый текст
+        worksheet.format('A1:I1', {
+            "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
+            "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}, "bold": True},
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE"
+        })
+        
+        # Ширина колонок
+        body = {
+            "requests": [
+                {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 40}, "fields": "pixelSize"}},
+                {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 120}, "fields": "pixelSize"}},
+                {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 9}, "properties": {"pixelSize": 70}, "fields": "pixelSize"}},
+                {"updateDimensionProperties": {"range": {"sheetId": worksheet.id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 50}, "fields": "pixelSize"}},
+            ]
+        }
+        self.spreadsheet.batch_update(body)
+        
+        # Центрирование
+        worksheet.format('A:I', {
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE"
+        })
+        
+        # Рамки
+        worksheet.format('A1:I100', {
+            "borders": {
+                "top": {"style": "SOLID"},
+                "bottom": {"style": "SOLID"},
+                "left": {"style": "SOLID"},
+                "right": {"style": "SOLID"}
+            }
+        })
+    
     @retry(**API_RETRY_CONFIG)
     async def _get_managers_stats(self, target_date: str) -> List[Dict]:
-        """
-        Получить статистику по всем менеджерам С АВТОПОВТОРОМ
-        
-        ✅ ИСПОЛЬЗУЕТ КОНСТАНТЫ ИЗ config/constants.py
-        """
+        """Получить статистику по всем менеджерам"""
         try:
             from services.managers_stats_service import managers_stats_service
             
-            # Получаем данные из рабочей таблицы
             raw_data = await managers_stats_service._fetch_managers_data()
-            
             logger.info(f"📥 Получено {len(raw_data)} записей из рабочей таблицы")
             
-            # Группируем по менеджерам с нормализацией
+            # Группируем по менеджерам
             stats_by_manager = {}
             unmatched_names = set()
             
@@ -208,12 +212,10 @@ class GoogleSheetsService:
                 if not manager or not color:
                     continue
                 
-                # ✅ Нормализуем имя менеджера (из константы)
                 manager_lower = manager.lower()
-                normalized_name = NAME_MAP.get(manager_lower)
+                normalized_name = NAME_MAP.get(manager_lower, manager)
                 
-                if not normalized_name:
-                    normalized_name = manager
+                if manager_lower not in NAME_MAP:
                     unmatched_names.add(manager)
                 
                 if normalized_name not in stats_by_manager:
@@ -229,10 +231,10 @@ class GoogleSheetsService:
             if unmatched_names:
                 logger.warning(f"⚠️ Неизвестные имена менеджеров: {unmatched_names}")
             
-            # ✅ Формируем список В ФИКСИРОВАННОМ ПОРЯДКЕ (из константы)
+            # Формируем список в фиксированном порядке
             managers_data = []
             
-            for manager_name in PAVLOGRAD_MANAGERS:  # ✅ ИЗ КОНСТАНТЫ
+            for manager_name in PAVLOGRAD_MANAGERS:
                 if manager_name in stats_by_manager:
                     colors = stats_by_manager[manager_name]
                     tubes = sum(colors.values())
@@ -242,10 +244,7 @@ class GoogleSheetsService:
                     
                     logger.info(f"📊 {manager_name}: {tubes} трубок (🟩{green} 🟪{purple} 🟨{yellow})")
                 else:
-                    tubes = 0
-                    green = 0
-                    purple = 0
-                    yellow = 0
+                    tubes = green = purple = yellow = 0
                 
                 managers_data.append({
                     "name": manager_name,
@@ -255,16 +254,179 @@ class GoogleSheetsService:
                     "purple": purple
                 })
             
-            logger.info(f"✅ Сформирован список: {len(managers_data)} менеджеров (алфавитный порядок)")
+            logger.info(f"✅ Сформирован список: {len(managers_data)} менеджеров")
             return managers_data
             
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики менеджеров: {e}")
             raise
     
+    def _prepare_data_updates(
+        self, 
+        managers_data: List[Dict], 
+        weekday: int
+    ) -> Tuple[List[Dict], int]:
+        """
+        ✅ НОВОЕ: Подготовить данные для обновления
+        
+        Args:
+            managers_data: Список менеджеров с данными
+            weekday: Номер дня недели (0-5)
+            
+        Returns:
+            (updates, total_row) - список обновлений и номер итоговой строки
+        """
+        updates = []
+        tubes_col = 3 + weekday
+        tubes_col_letter = chr(64 + tubes_col)
+        
+        # 1. Номера и имена менеджеров
+        names_range_values = []
+        for idx, manager in enumerate(managers_data, start=1):
+            names_range_values.append([idx, manager['name']])
+        
+        updates.append({
+            'range': f'A2:B{len(managers_data)+1}',
+            'values': names_range_values
+        })
+        
+        # 2. Трубки за текущий день
+        tubes_values = [[manager['tubes']] for manager in managers_data]
+        updates.append({
+            'range': f'{tubes_col_letter}2:{tubes_col_letter}{len(managers_data)+1}',
+            'values': tubes_values
+        })
+        
+        logger.info(f"📝 Запись данных в колонку {tubes_col_letter}2:{tubes_col_letter}{len(managers_data)+1}")
+        
+        # 3. Формулы для "Итого трубок"
+        formulas_total = [
+            [f"=SUM(C{idx+1}:H{idx+1})"] 
+            for idx, _ in enumerate(managers_data, start=1)
+        ]
+        updates.append({
+            'range': f'I2:I{len(managers_data)+1}',
+            'values': formulas_total
+        })
+        
+        total_row = len(managers_data) + 2
+        
+        return updates, total_row
+    
+    def _prepare_total_row_updates(
+        self, 
+        total_row: int,
+        managers_count: int
+    ) -> List[Dict]:
+        """
+        ✅ НОВОЕ: Подготовить обновления для итоговой строки
+        
+        Args:
+            total_row: Номер итоговой строки
+            managers_count: Количество менеджеров
+            
+        Returns:
+            Список обновлений для итоговой строки
+        """
+        updates = []
+        
+        # Заголовок "ИТОГО:"
+        updates.append({
+            'range': f'A{total_row}:B{total_row}',
+            'values': [["", "ИТОГО:"]]
+        })
+        
+        # Формулы для каждого дня недели + итого
+        for col in range(3, 9):
+            col_letter = chr(64 + col)
+            updates.append({
+                'range': f'{col_letter}{total_row}',
+                'values': [[f"=SUM({col_letter}2:{col_letter}{total_row-1})"]]
+            })
+        
+        updates.append({
+            'range': f'I{total_row}',
+            'values': [[f"=SUM(I2:I{total_row-1})"]]
+        })
+        
+        return updates
+    
+    def _prepare_timestamp_update(
+        self, 
+        total_row: int,
+        current_time: str
+    ) -> Dict:
+        """
+        ✅ НОВОЕ: Подготовить обновление с временем последнего обновления
+        
+        Args:
+            total_row: Номер итоговой строки
+            current_time: Текущее время (форматированное)
+            
+        Returns:
+            Обновление для строки с временем
+        """
+        time_row = total_row + 2
+        
+        return {
+            'range': f'A{time_row}:I{time_row}',
+            'values': [[f"📊 Обновлено: {current_time}", "", "", "", "", "", "", "", ""]]
+        }
+    
+    def _apply_formatting(
+        self, 
+        worksheet, 
+        total_row: int
+    ) -> None:
+        """
+        ✅ НОВОЕ: Применить форматирование к итоговой строке и времени
+        
+        Args:
+            worksheet: Объект worksheet
+            total_row: Номер итоговой строки
+        """
+        time_row = total_row + 2
+        
+        # Форматирование итоговой строки
+        worksheet.format(f'A{total_row}:I{total_row}', {
+            "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
+            "textFormat": {"bold": True},
+            "horizontalAlignment": "CENTER"
+        })
+        
+        # Форматирование строки с временем
+        worksheet.format(f'A{time_row}:I{time_row}', {
+            "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95},
+            "textFormat": {"italic": True, "fontSize": 9},
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE"
+        })
+        
+        # Объединение ячеек для времени
+        merge_request = {
+            "requests": [{
+                "mergeCells": {
+                    "range": {
+                        "sheetId": worksheet.id,
+                        "startRowIndex": time_row - 1,
+                        "endRowIndex": time_row,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 9
+                    },
+                    "mergeType": "MERGE_ALL"
+                }
+            }]
+        }
+        self.spreadsheet.batch_update(merge_request)
+    
     @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
-        """Обновить статистику в Google Sheets С АВТОПОВТОРОМ"""
+        """
+        ✅ РЕФАКТОРИНГ: Обновить статистику в Google Sheets
+        
+        Теперь функция просто оркестрирует процесс,
+        вся логика разбита на подфункции
+        """
         if not self.client or not self.spreadsheet:
             raise Exception("Google Sheets сервис не инициализирован")
         
@@ -275,6 +437,7 @@ class GoogleSheetsService:
             
             logger.info(f"🔄 Обновление статистики для листа: {title}")
             
+            # 1. Получение или создание листа
             try:
                 worksheet = self.spreadsheet.worksheet(title)
             except WorksheetNotFound:
@@ -282,138 +445,36 @@ class GoogleSheetsService:
                 if not worksheet:
                     raise Exception("Не удалось создать лист")
             
+            # 2. Проверка дня недели
+            weekday = now.weekday()
+            if weekday > 5:
+                logger.info("📅 Воскресенье - обновление не требуется")
+                return
+            
+            # 3. Получение статистики менеджеров
             current_date = now.strftime("%Y-%m-%d")
             managers_data = await self._get_managers_stats(current_date)
             
             if not managers_data:
                 logger.warning("⚠️ Нет данных для обновления")
                 return
-        
-            logger.info(f"📋 Менеджеры в фиксированном порядке (алфавит)")
             
-            weekday = now.weekday()
-            days_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+            # 4. Подготовка обновлений
+            data_updates, total_row = self._prepare_data_updates(managers_data, weekday)
+            total_row_updates = self._prepare_total_row_updates(total_row, len(managers_data))
+            timestamp_update = self._prepare_timestamp_update(total_row, now.strftime("%d.%m.%Y %H:%M"))
             
-            logger.info(f"📅 Текущая дата: {now.strftime('%d.%m.%Y %H:%M')}")
-            logger.info(f"📅 День недели: {days_names[weekday]} (weekday={weekday})")
+            # 5. Объединение всех обновлений
+            all_updates = data_updates + total_row_updates + [timestamp_update]
             
-            if weekday > 5:
-                logger.info("📅 Воскресенье - обновление не требуется")
-                return
+            # 6. Отправка одним батчем
+            logger.info(f"📤 Отправка {len(all_updates)} обновлений одним батчем...")
+            worksheet.batch_update(all_updates, value_input_option='USER_ENTERED')
             
-            tubes_col = 3 + weekday
-            tubes_col_letter = chr(64 + tubes_col)
+            # 7. Применение форматирования
+            self._apply_formatting(worksheet, total_row)
             
-            col_names = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ']
-            logger.info(f"📊 Будет заполнена колонка: {tubes_col_letter} ({col_names[weekday]})")
-            
-            rows_data = []
-            
-            for idx, manager in enumerate(managers_data, start=2):
-                name = manager.get('name', 'Неизвестно')
-                tubes = manager.get('tubes', 0)
-                
-                rows_data.append({
-                    'row': idx,
-                    'name': name,
-                    'tubes': tubes
-                })
-            
-            # Обновление таблицы (batch)
-            updates = []
-            
-            # 1. Номера и имена
-            names_range_values = []
-            for idx, data in enumerate(rows_data, start=1):
-                names_range_values.append([idx, data['name']])
-            
-            updates.append({
-                'range': f'A2:B{len(rows_data)+1}',
-                'values': names_range_values
-            })
-            
-            # 2. Трубки за день
-            tubes_values = [[data['tubes']] for data in rows_data]
-            updates.append({
-                'range': f'{tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}',
-                'values': tubes_values
-            })
-            
-            logger.info(f"📝 Запись данных в колонку {tubes_col_letter}2:{tubes_col_letter}{len(rows_data)+1}")
-            
-            # 3. Формулы "Итого"
-            formulas_total = [
-                [f"=SUM(C{data['row']}:H{data['row']})"] 
-                for data in rows_data
-            ]
-            updates.append({
-                'range': f'I2:I{len(rows_data)+1}',
-                'values': formulas_total
-            })
-            
-            # 4. Итоговая строка
-            total_row = len(rows_data) + 2
-            
-            updates.append({
-                'range': f'A{total_row}:B{total_row}',
-                'values': [["", "ИТОГО:"]]
-            })
-            
-            for col in range(3, 9):
-                col_letter = chr(64 + col)
-                updates.append({
-                    'range': f'{col_letter}{total_row}',
-                    'values': [[f"=SUM({col_letter}2:{col_letter}{total_row-1})"]]
-                })
-            
-            updates.append({
-                'range': f'I{total_row}',
-                'values': [[f"=SUM(I2:I{total_row-1})"]]
-            })
-            
-            # 5. Время обновления
-            time_row = total_row + 2
-            current_time = now.strftime("%d.%m.%Y %H:%M")
-            updates.append({
-                'range': f'A{time_row}:I{time_row}',
-                'values': [[f"📊 Обновлено: {current_time}", "", "", "", "", "", "", "", ""]]
-            })
-            
-            logger.info(f"📤 Отправка {len(updates)} обновлений одним батчем...")
-            
-            worksheet.batch_update(updates, value_input_option='USER_ENTERED')
-            
-            # Форматирование
-            worksheet.format(f'A{total_row}:I{total_row}', {
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
-                "textFormat": {"bold": True},
-                "horizontalAlignment": "CENTER"
-            })
-            
-            worksheet.format(f'A{time_row}:I{time_row}', {
-                "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95},
-                "textFormat": {"italic": True, "fontSize": 9},
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE"
-            })
-            
-            merge_request = {
-                "requests": [{
-                    "mergeCells": {
-                        "range": {
-                            "sheetId": worksheet.id,
-                            "startRowIndex": time_row - 1,
-                            "endRowIndex": time_row,
-                            "startColumnIndex": 0,
-                            "endColumnIndex": 9
-                        },
-                        "mergeType": "MERGE_ALL"
-                    }
-                }]
-            }
-            self.spreadsheet.batch_update(merge_request)
-            
-            logger.info(f"✅ Статистика обновлена: {len(rows_data)} менеджеров")
+            logger.info(f"✅ Статистика обновлена: {len(managers_data)} менеджеров")
             
         except Exception as e:
             logger.error(f"❌ Ошибка обновления статистики: {e}")

@@ -1,12 +1,5 @@
 """
-ОПТИМИЗИРОВАННЫЙ: services/analytics_service.py
-Объединены SQL запросы для ускорения
-
-ИЗМЕНЕНИЯ:
-✅ get_dashboard_overview() - 1 SQL запрос вместо 4
-✅ get_dashboard_managers() - добавлен type hint
-✅ get_dashboard_support() - добавлен type hint
-✅ get_dashboard_timing() - добавлен type hint
+Сервис аналитики ошибок телефонии - исправленная версия
 """
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
@@ -19,15 +12,7 @@ class AnalyticsService:
     
     @staticmethod
     def _get_period_filter(period: str) -> Tuple[str, str, str]:
-        """
-        Возвращает фильтр и название для периода
-        
-        Args:
-            period: Период ('today', 'week', 'month')
-            
-        Returns:
-            (where_clause, date_filter, title)
-        """
+        """Возвращает фильтр и название для периода"""
         if period == "today":
             date_filter = datetime.now().strftime("%Y-%m-%d")
             title = "за сегодня"
@@ -46,15 +31,7 @@ class AnalyticsService:
     @staticmethod
     def get_dashboard_overview(period: str = "today") -> str:
         """
-        Страница 1: Общий обзор
-        
-        ✅ ОПТИМИЗИРОВАНО: 1 SQL запрос вместо 4
-        
-        Args:
-            period: Период для отображения
-            
-        Returns:
-            Форматированная строка со статистикой
+        Страница 1: Общий обзор (ИСПРАВЛЕНО - убрали "в обработке")
         """
         try:
             conn = db._get_connection()
@@ -62,32 +39,53 @@ class AnalyticsService:
             
             where_clause, date_filter, title = AnalyticsService._get_period_filter(period)
             
-            # ✅ ОПТИМИЗАЦИЯ: Объединённый запрос - всё за один раз
-            cursor.execute(f"""
-                SELECT 
-                    COUNT(*) as total,
-                    COUNT(CASE WHEN support_action IS NOT NULL THEN 1 END) as resolved,
-                    AVG(CASE WHEN response_time_seconds <= 1800 THEN response_time_seconds END) as avg_time
-                FROM error_reports 
-                WHERE {where_clause}
-            """, (date_filter,))
-            
-            stats = cursor.fetchone()
-            total, resolved, avg_time = stats
+            # Общие данные
+            cursor.execute(
+                f"SELECT COUNT(*) FROM error_reports WHERE {where_clause}",
+                (date_filter,)
+            )
+            total = cursor.fetchone()[0]
             
             if total == 0:
                 conn.close()
                 return f"📊 <b>ДАШБОРД {title.upper()}</b>\n\n📭 Ошибок не найдено."
             
-            # По телефониям (отдельный запрос - нужна группировка)
-            cursor.execute(f"""
+            # Только решённые (все с support_action)
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM error_reports 
+                WHERE {where_clause} AND support_action IS NOT NULL
+                """,
+                (date_filter,)
+            )
+            resolved = cursor.fetchone()[0]
+            
+            # По телефониям
+            cursor.execute(
+                f"""
                 SELECT telephony_code, COUNT(*) as cnt 
                 FROM error_reports 
                 WHERE {where_clause}
                 GROUP BY telephony_code
                 ORDER BY cnt DESC
-            """, (date_filter,))
+                """,
+                (date_filter,)
+            )
             by_telephony = cursor.fetchall()
+            
+            # Среднее время ответа (только до 30 минут)
+            cursor.execute(
+                f"""
+                SELECT AVG(response_time_seconds)
+                FROM error_reports 
+                WHERE {where_clause} 
+                AND response_time_seconds IS NOT NULL 
+                AND response_time_seconds <= 1800
+                """,
+                (date_filter,)
+            )
+            avg_time = cursor.fetchone()[0]
             
             conn.close()
             
@@ -136,13 +134,7 @@ class AnalyticsService:
     @staticmethod
     def get_dashboard_managers(period: str = "today") -> str:
         """
-        Страница 2: Все менеджеры
-        
-        Args:
-            period: Период для отображения
-            
-        Returns:
-            Форматированная строка со статистикой менеджеров
+        Страница 2: Все менеджеры (ИСПРАВЛЕНО - без медалей, выровнена таблица)
         """
         try:
             conn = db._get_connection()
@@ -151,13 +143,16 @@ class AnalyticsService:
             where_clause, date_filter, title = AnalyticsService._get_period_filter(period)
             
             # Все менеджеры
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT username, user_id, COUNT(*) as cnt 
                 FROM error_reports 
                 WHERE {where_clause}
                 GROUP BY user_id 
                 ORDER BY cnt DESC
-            """, (date_filter,))
+                """,
+                (date_filter,)
+            )
             managers = cursor.fetchall()
             
             # Общее количество ошибок
@@ -208,13 +203,7 @@ class AnalyticsService:
     @staticmethod
     def get_dashboard_support(period: str = "today") -> str:
         """
-        Страница 3: Все саппорты
-        
-        Args:
-            period: Период для отображения
-            
-        Returns:
-            Форматированная строка со статистикой саппорта
+        Страница 3: Все саппорты (ИСПРАВЛЕНО - без медалей, время в конце)
         """
         try:
             conn = db._get_connection()
@@ -234,7 +223,8 @@ class AnalyticsService:
                 where_clause = "DATE(resolved_at) >= ?"
             
             # Все саппорты (только до 30 минут)
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT support_username, support_user_id, 
                        COUNT(*) as total,
                        AVG(CASE WHEN response_time_seconds <= 1800 THEN response_time_seconds END) as avg_time,
@@ -246,7 +236,9 @@ class AnalyticsService:
                 WHERE {where_clause} AND support_username IS NOT NULL
                 GROUP BY support_user_id 
                 ORDER BY total DESC
-            """, (date_filter,))
+                """,
+                (date_filter,)
+            )
             supports = cursor.fetchall()
             
             conn.close()
@@ -296,13 +288,7 @@ class AnalyticsService:
     @staticmethod
     def get_dashboard_timing(period: str = "today") -> str:
         """
-        Страница 4: Время реакции
-        
-        Args:
-            period: Период для отображения
-            
-        Returns:
-            Форматированная строка со статистикой времени
+        Страница 4: Время реакции (ИСПРАВЛЕНО - только до 30 минут)
         """
         try:
             conn = db._get_connection()
@@ -322,7 +308,8 @@ class AnalyticsService:
                 where_clause = "DATE(resolved_at) >= ?"
             
             # Только ошибки обработанные до 30 минут
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT AVG(response_time_seconds), 
                        MIN(response_time_seconds),
                        MAX(response_time_seconds),
@@ -331,11 +318,14 @@ class AnalyticsService:
                 WHERE {where_clause} 
                 AND response_time_seconds IS NOT NULL
                 AND response_time_seconds <= 1800
-            """, (date_filter,))
+                """,
+                (date_filter,)
+            )
             stats = cursor.fetchone()
             
             # Распределение
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT 
                     SUM(CASE WHEN response_time_seconds < 120 THEN 1 ELSE 0 END) as under_2min,
                     SUM(CASE WHEN response_time_seconds BETWEEN 120 AND 300 THEN 1 ELSE 0 END) as from_2_5,
@@ -345,7 +335,9 @@ class AnalyticsService:
                 WHERE {where_clause} 
                 AND response_time_seconds IS NOT NULL
                 AND response_time_seconds <= 1800
-            """, (date_filter,))
+                """,
+                (date_filter,)
+            )
             distribution = cursor.fetchone()
             
             conn.close()
