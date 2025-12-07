@@ -421,20 +421,19 @@ class GoogleSheetsService:
     
     @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
-        """
-        ✅ РЕФАКТОРИНГ: Обновить статистику в Google Sheets
-        
-        Теперь функция просто оркестрирует процесс,
-        вся логика разбита на подфункции
-        """
+        """Обновить статистику в Google Sheets"""
         if not self.client or not self.spreadsheet:
             raise Exception("Google Sheets сервис не инициализирован")
-        
+    
         try:
             now = datetime.now(self.timezone)
-            if now.weekday() == 6:  # 6 = воскресенье
+        
+            # Пропускаем воскресенье
+            if now.weekday() == 6:
                 logger.info("📅 Воскресенье - обновление статистики пропущено")
-            return
+                return
+        
+            start, end = self._get_week_range(now)
             start, end = self._get_week_range(now)
             title = self._get_week_title(start, end)
             
