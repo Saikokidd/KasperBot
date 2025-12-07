@@ -30,3 +30,12 @@ logs/
 # База данных
 *.db
 *.sqlite
+# Бэкапы (локальные)
+backups/
+
+# Временные файлы
+*.backup
+*.backup2
+nohup.out
+project_structure.txt
+code_dump.txt
