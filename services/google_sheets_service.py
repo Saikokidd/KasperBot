@@ -432,6 +432,9 @@ class GoogleSheetsService:
         
         try:
             now = datetime.now(self.timezone)
+            if now.weekday() == 6:  # 6 = воскресенье
+                logger.info("📅 Воскресенье - обновление статистики пропущено")
+            return
             start, end = self._get_week_range(now)
             title = self._get_week_title(start, end)
             
