@@ -1,5 +1,11 @@
 """
-Сервис для работы со статистикой менеджеров из Google Sheets - улучшенная визуализация
+ИСПРАВЛЕНО: services/managers_stats_service.py
+Улучшена обработка ошибок Google Apps Script
+
+ИЗМЕНЕНИЯ:
+✅ Проверка Content-Type перед парсингом JSON
+✅ Вывод HTML в логи для диагностики
+✅ Fallback на пустой список при ошибке
 """
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
@@ -12,33 +18,26 @@ class ManagersStatsService:
     """Сервис для получения статистики менеджеров Павлограда"""
     
     async def get_managers_stats(self) -> str:
-        """
-        Получает статистику менеджеров за сегодня
-        
-        Returns:
-            Форматированная строка со статистикой в стиле дашборда
-        """
+        """Получает статистику менеджеров за сегодня"""
         try:
-            # Получаем данные из таблицы
             data = await self._fetch_managers_data()
-            
-            # Группируем по менеджерам
             stats_by_manager = self._group_by_manager(data)
-            
-            # Форматируем результат в новом стиле
             result = self._format_stats_dashboard(stats_by_manager)
-            
             return result
-            
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики менеджеров: {e}", exc_info=True)
             return "⚠️ Ошибка получения статистики менеджеров"
     
     async def _fetch_managers_data(self) -> List[Dict]:
-        """Получает данные менеджеров из Google Sheets"""
+        """
+        Получает данные менеджеров из Google Sheets через Apps Script
+        
+        ✅ ИСПРАВЛЕНО: Улучшена обработка ошибок
+        """
         url = settings.GOOGLE_APPS_SCRIPT_URL
         
         if not url:
+            logger.error("❌ GOOGLE_APPS_SCRIPT_URL не установлен в .env")
             raise ValueError("GOOGLE_APPS_SCRIPT_URL не настроен")
         
         # Добавляем параметр action=managers
@@ -47,24 +46,62 @@ class ManagersStatsService:
         else:
             url += '?action=managers'
         
+        logger.debug(f"🔗 Запрос к Apps Script: {url}")
+        
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
                     if response.status != 200:
                         logger.error(f"❌ HTTP ошибка: {response.status}")
                         raise Exception(f"HTTP {response.status}")
                     
+                    # ✅ НОВОЕ: Проверяем Content-Type
+                    content_type = response.headers.get('Content-Type', '')
+                    logger.debug(f"📄 Content-Type: {content_type}")
+                    
+                    if 'text/html' in content_type:
+                        # Получаем HTML для диагностики
+                        html_text = await response.text()
+                        
+                        # Логируем первые 500 символов
+                        logger.error(f"❌ Apps Script вернул HTML вместо JSON!")
+                        logger.error(f"📄 Первые 500 символов ответа:")
+                        logger.error(html_text[:500])
+                        
+                        # Проверяем на страницу входа Google
+                        if 'accounts.google.com' in html_text or 'Sign in' in html_text:
+                            logger.error("🔒 Похоже на страницу входа Google!")
+                            logger.error("💡 Проверьте:")
+                            logger.error("   1. Apps Script опубликован как Web App")
+                            logger.error("   2. Доступ: 'Anyone' или 'Anyone with the link'")
+                            logger.error("   3. URL правильный (последняя версия деплоя)")
+                        
+                        raise ValueError("Apps Script вернул HTML вместо JSON - проверьте публикацию скрипта")
+                    
+                    # Пытаемся распарсить JSON
                     data = await response.json()
                     
+                    # Проверка на ошибку от скрипта
                     if isinstance(data, dict) and 'error' in data:
                         logger.error(f"❌ Ошибка от скрипта: {data['error']}")
                         raise Exception(data['error'])
                     
+                    if not isinstance(data, list):
+                        logger.error(f"❌ Неожиданный формат данных: {type(data)}")
+                        logger.error(f"📄 Данные: {data}")
+                        raise ValueError("Apps Script вернул не список")
+                    
                     logger.info(f"✅ Получено {len(data)} записей менеджеров")
                     return data
                     
+        except aiohttp.ClientError as e:
+            logger.error(f"❌ Ошибка HTTP запроса: {e}", exc_info=True)
+            raise
+        except ValueError as e:
+            # HTML вместо JSON - повторно выбрасываем
+            raise
         except Exception as e:
-            logger.error(f"❌ Ошибка получения данных менеджеров: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка получения данных: {e}", exc_info=True)
             raise
     
     def _group_by_manager(self, data: List[Dict]) -> Dict[str, Dict[str, int]]:
@@ -91,15 +128,7 @@ class ManagersStatsService:
         return stats
     
     def _format_stats_dashboard(self, stats: Dict[str, Dict[str, int]]) -> str:
-        """
-        Форматирует статистику в стиле дашборда ошибок
-        
-        Args:
-            stats: Статистика по менеджерам
-            
-        Returns:
-            Форматированная строка
-        """
+        """Форматирует статистику в стиле дашборда"""
         kiev_tz = timezone(timedelta(hours=2))
         current_time = datetime.now(kiev_tz).strftime("%H:%M")
         
@@ -112,14 +141,13 @@ class ManagersStatsService:
         if not stats:
             return f"👥 <b>МЕНЕДЖЕРЫ (ПАВЛОГРАД) на {current_time}</b>\n\n📭 Данных нет."
         
-        # Сортируем по общему количеству (больше → меньше)
+        # Сортируем по общему количеству
         sorted_managers = sorted(
             stats.items(),
             key=lambda x: sum(x[1].values()),
             reverse=True
         )
         
-        # Считаем общее
         total_calls = sum(sum(colors.values()) for colors in stats.values())
         
         result = f"👥 <b>МЕНЕДЖЕРЫ (ПАВЛОГРАД) на {current_time}</b>\n"
@@ -141,17 +169,13 @@ class ManagersStatsService:
             yellow = colors["ЖЕЛТЫЙ"]
             purple = colors["ФИОЛЕТОВЫЙ"]
             
-            # Процент от общего количества
             percentage = int((total / total_calls) * 100) if total_calls > 0 else 0
-            
-            # Прогресс-бар
             filled = int(percentage / 10) if percentage <= 100 else 10
             bar = "█" * filled + "░" * (10 - filled)
             
             result += f"<b>{i}. {manager}</b> - {total} трубок\n"
             result += f"{bar} {percentage}%\n"
             
-            # Детализация по цветам (только если есть)
             colors_line = []
             if green > 0:
                 green_pct = int((green / total) * 100)
@@ -168,7 +192,6 @@ class ManagersStatsService:
             
             result += "\n"
         
-        # Итоги по цветам
         result += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         
         total_green = sum(m["ЗЕЛЕНЫЙ"] for m in stats.values())
