@@ -1,8 +1,11 @@
 """
-УНИВЕРСАЛЬНАЯ СИСТЕМА БЫСТРЫХ ОШИБОК
-Работает с любыми белыми телефониями, где включены быстрые ошибки
+ИСПРАВЛЕННАЯ СИСТЕМА БЫСТРЫХ ОШИБОК
+Динамический regex - НЕ требует перезагрузки ConversationHandler
 
-ИСПРАВЛЕНИЕ: name задаётся при создании ConversationHandler
+КЛЮЧЕВОЕ ИЗМЕНЕНИЕ:
+✅ Regex строится динамически при каждом входе в conversation
+✅ Не нужно пересоздавать handler при изменении настроек
+✅ Изменения применяются мгновенно
 """
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -35,36 +38,46 @@ def get_quick_errors_telephonies():
     return db.get_quick_errors_telephonies()
 
 
-def get_quick_errors_regex():
+def is_quick_errors_telephony(message_text: str) -> bool:
     """
-    Построить regex для всех телефоний с быстрыми ошибками
+    ✅ НОВОЕ: Проверяет, является ли текст названием телефонии с быстрыми ошибками
     
+    Вызывается при каждом сообщении для динамической проверки
+    
+    Args:
+        message_text: Текст сообщения от пользователя
+        
     Returns:
-        Regex pattern (str) или None если нет телефоний
+        True если это название телефонии с включёнными быстрыми ошибками
     """
     telephonies = get_quick_errors_telephonies()
     
     if not telephonies:
-        return None
+        return False
     
-    # Строим regex: ^(BMW|Wizard|Телефония3)$
-    names = [tel['name'] for tel in telephonies]
-    pattern = f"^({'|'.join(names)})$"
+    # Проверяем точное совпадение
+    for tel in telephonies:
+        if tel['name'] == message_text.strip():
+            return True
     
-    logger.debug(f"📞 Regex для быстрых ошибок: {pattern}")
-    return pattern
+    return False
 
 
 async def handle_telephony_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик выбора телефонии с быстрыми ошибками
     
-    Универсальный - работает для любой белой телефонии
+    ✅ ИЗМЕНЕНО: Больше не зависит от статического regex
     """
     user_id = update.effective_user.id
     tel_name = update.message.text.strip()
     
     logger.info(f"🔵 Выбрана телефония с быстрыми ошибками: {tel_name} от user_id={user_id}")
+    
+    # ✅ НОВОЕ: Динамическая проверка при входе
+    if not is_quick_errors_telephony(tel_name):
+        logger.warning(f"⚠️ {tel_name} не в списке активных быстрых ошибок")
+        return ConversationHandler.END
     
     # Ищем телефонию в списке активных
     telephonies = get_quick_errors_telephonies()
@@ -76,7 +89,7 @@ async def handle_telephony_choice(update: Update, context: ContextTypes.DEFAULT_
             break
     
     if not selected_tel:
-        logger.error(f"❌ Телефония {tel_name} не найдена среди доступных для быстрых ошибок")
+        logger.error(f"❌ Телефония {tel_name} не найдена (race condition)")
         await update.message.reply_text(
             "⚠️ Эта телефония временно недоступна для быстрых ошибок."
         )
@@ -399,39 +412,66 @@ async def send_quick_error_to_group(
 
 
 # ============================================================================
-# ДИНАМИЧЕСКОЕ СОЗДАНИЕ ConversationHandler
+# ДИНАМИЧЕСКИЙ ФИЛЬТР - НЕ требует перезагрузки handler
+# ============================================================================
+
+class QuickErrorsFilter(filters.MessageFilter):
+    """
+    ✅ НОВОЕ: Динамический фильтр для быстрых ошибок
+    
+    Проверяет при каждом сообщении, является ли текст названием
+    телефонии с включёнными быстрыми ошибками
+    """
+    
+    def filter(self, message):
+        if not message.text:
+            return False
+        
+        # Исключаем кнопки меню
+        menu_buttons = {
+            "Ошибки телефонии", "Полезные ссылки", "Статистика трубок",
+            "Статистика менеджеров", "Управление ботом", "Статистика ошибок",
+            "◀️ Меню"
+        }
+        
+        if message.text in menu_buttons:
+            return False
+        
+        # Динамическая проверка
+        return is_quick_errors_telephony(message.text)
+
+
+# ============================================================================
+# СОЗДАНИЕ ConversationHandler (только ОДИН раз при запуске)
 # ============================================================================
 
 def create_quick_errors_conv():
     """
     Создать ConversationHandler для быстрых ошибок
     
+    ✅ ИЗМЕНЕНО: Использует динамический фильтр вместо статического regex
+    
     Returns:
-        ConversationHandler или None если нет доступных телефоний
+        ConversationHandler или None
     """
-    # Получаем regex
-    regex_pattern = get_quick_errors_regex()
+    telephonies = get_quick_errors_telephonies()
     
-    if not regex_pattern:
+    if not telephonies:
         logger.warning("⚠️ Нет телефоний с включёнными быстрыми ошибками")
-        return None
+        # ✅ ВАЖНО: Возвращаем handler даже если сейчас нет телефоний
+        # Он будет работать когда их включат
     
-    logger.info(f"✅ Создание ConversationHandler для быстрых ошибок: {regex_pattern}")
+    logger.info(f"✅ Создание ConversationHandler для быстрых ошибок")
+    if telephonies:
+        names = [tel['name'] for tel in telephonies]
+        logger.info(f"📞 Доступные телефонии: {', '.join(names)}")
     
-    # Создаём фильтр для кнопок меню (чтобы исключить их)
-    menu_buttons_pattern = (
-        "^(Ошибки телефонии|Полезные ссылки|Статистика трубок|"
-        "Статистика менеджеров|Управление ботом|Статистика ошибок|◀️ Меню|"
-        "Звонари|Wizard)$"
-    )
-    
-    # ✅ ИСПРАВЛЕНО: Добавляем name при создании
     return ConversationHandler(
-        name='quick_errors',  # ✅ Указываем name здесь
+        name='quick_errors',
         entry_points=[
+            # ✅ НОВОЕ: Динамический фильтр вместо regex
             MessageHandler(
-                filters.Regex(regex_pattern) & 
-                filters.ChatType.PRIVATE,
+                QuickErrorsFilter() & filters.ChatType.PRIVATE,
                 handle_telephony_choice
             ),
             CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
@@ -442,7 +482,6 @@ def create_quick_errors_conv():
                 MessageHandler(
                     filters.TEXT & 
                     ~filters.COMMAND & 
-                    ~filters.Regex(menu_buttons_pattern) &
                     filters.ChatType.PRIVATE,
                     handle_sip_input
                 ),
@@ -467,7 +506,7 @@ def create_quick_errors_conv():
         allow_reentry=True,
         per_chat=True,
         per_user=True,
-        per_message=True  # ✅ Убираем предупреждение
+        per_message=True
     )
 
 
@@ -475,13 +514,7 @@ def create_quick_errors_conv():
 quick_errors_conv = create_quick_errors_conv()
 
 
-# Функция для внешнего использования (логирование)
 def get_quick_errors_telephony_names():
     """Получить список названий телефоний для быстрых ошибок"""
     telephonies = get_quick_errors_telephonies()
     return [tel['name'] for tel in telephonies]
-
-
-# ============================================================================
-# КОНЕЦ ФАЙЛА handlers/quick_errors.py
-# ============================================================================

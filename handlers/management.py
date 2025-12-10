@@ -1,5 +1,10 @@
 """
-Обработчики управления ботом (для админов)
+handlers/management.py (ИСПРАВЛЕНО)
+
+ИЗМЕНЕНИЯ:
+✅ Исправлена обработка пересылки с приватностью
+✅ Добавлена поддержка reply на сообщение
+✅ Улучшена обработка ID из текста
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -78,7 +83,11 @@ async def add_manager_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.message.edit_text(
         "➕ <b>Добавление менеджера</b>\n\n"
-        "Отправьте ID пользователя (число) или перешлите любое сообщение от него.\n\n"
+        "Отправьте ID пользователя (число).\n\n"
+        "<b>Как узнать ID:</b>\n"
+        "1. Напишите боту @userinfobot\n"
+        "2. Скопируйте ваш ID\n"
+        "3. Отправьте сюда\n\n"
         "Отмена: /cancel",
         parse_mode="HTML"
     )
@@ -87,25 +96,69 @@ async def add_manager_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_manager_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ID менеджера"""
-    # Если переслали сообщение
+    """
+    Обработка ID менеджера
+    
+    ✅ ИСПРАВЛЕНО: Работает с приватностью пользователей
+    """
+    user_id = None
+    username = None
+    first_name = None
+    
+    # Способ 1: Пересылка сообщения (если нет приватности)
     if update.message.forward_from:
         user_id = update.message.forward_from.id
         username = update.message.forward_from.username
         first_name = update.message.forward_from.first_name
+        logger.info(f"✅ Получен ID из пересылки: {user_id}")
+    
+    # Способ 2: Reply на сообщение
+    elif update.message.reply_to_message and update.message.reply_to_message.from_user:
+        user_id = update.message.reply_to_message.from_user.id
+        username = update.message.reply_to_message.from_user.username
+        first_name = update.message.reply_to_message.from_user.first_name
+        logger.info(f"✅ Получен ID из reply: {user_id}")
+    
+    # Способ 3: Текст с ID
     else:
-        # Если просто написали ID
+        text = update.message.text.strip()
+        
+        # Пытаемся извлечь ID из текста
         try:
-            user_id = int(update.message.text.strip())
-            username = None
-            first_name = None
+            # Убираем всё кроме цифр
+            digits = ''.join(filter(str.isdigit, text))
+            
+            if not digits:
+                await update.message.reply_text(
+                    "❌ Не найден ID пользователя!\n\n"
+                    "Отправьте ID (число).\n\n"
+                    "<b>Как узнать ID:</b>\n"
+                    "1. Напишите боту @userinfobot\n"
+                    "2. Скопируйте ID\n"
+                    "3. Отправьте сюда",
+                    parse_mode="HTML"
+                )
+                return WAITING_MANAGER_ID
+            
+            user_id = int(digits)
+            logger.info(f"✅ Получен ID из текста: {user_id}")
+            
         except ValueError:
             await update.message.reply_text(
-                "❌ Неверный формат! Отправьте число (ID пользователя) или перешлите сообщение от него."
+                "❌ Неверный формат ID!\n\n"
+                "ID должен быть числом (например: 603514353)"
             )
             return WAITING_MANAGER_ID
     
-    # Добавляем
+    # Валидация ID
+    if not user_id or user_id <= 0:
+        await update.message.reply_text(
+            "❌ Неверный ID пользователя!\n\n"
+            "ID должен быть положительным числом."
+        )
+        return WAITING_MANAGER_ID
+    
+    # Добавляем менеджера
     success, message = management_service.add_manager(
         user_id, username, first_name, update.effective_user.id
     )
@@ -519,7 +572,11 @@ async def quick_errors_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def toggle_quick_errors_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключить быстрые ошибки для телефонии"""
+    """
+    Переключить быстрые ошибки для телефонии
+    
+    ✅ ИЗМЕНЕНО: Убрана перезагрузка handler - изменения применяются мгновенно
+    """
     query = update.callback_query
     await query.answer("Переключаю...")
     
@@ -541,41 +598,12 @@ async def toggle_quick_errors_callback(update: Update, context: ContextTypes.DEF
     status_text = "✅ Включены" if new_state else "❌ Выключены"
     await query.answer(f"⚡️ Быстрые ошибки: {status_text}", show_alert=True)
     
+    # ✅ НОВОЕ: Просто обновляем меню - handler обновится сам
+    logger.info(f"✅ Быстрые ошибки для {tel_code}: {new_state}")
+    logger.info("ℹ️ Изменения применятся автоматически при следующем использовании")
+    
     # Обновляем меню
     await quick_errors_menu(update, context)
-    
-    # ВАЖНО: Перезагружаем ConversationHandler
-    logger.info("🔄 Пересоздание ConversationHandler для быстрых ошибок...")
-    
-    try:
-        # Удаляем старый handler
-        from main import app  # Предполагаем что app доступен глобально
-        
-        # Находим handler по имени (если задавали name при add_handler)
-        for handler in app.handlers[0]:  # Группа 0
-            if hasattr(handler, 'name') and handler.name == 'quick_errors':
-                app.remove_handler(handler)
-                logger.info("✅ Старый handler удалён")
-                break
-        
-        # Создаём новый
-        from handlers.quick_errors import create_quick_errors_conv
-        new_conv = create_quick_errors_conv()
-        
-        if new_conv:
-            app.add_handler(new_conv, group=0)
-            new_conv.name = 'quick_errors'  # Задаём имя для поиска
-            logger.info("✅ Новый handler добавлен")
-            
-            # Логируем доступные телефонии
-            from handlers.quick_errors import get_quick_errors_telephony_names
-            names = get_quick_errors_telephony_names()
-            logger.info(f"📞 Быстрые ошибки доступны для: {', '.join(names)}")
-        else:
-            logger.warning("⚠️ Нет активных телефоний для быстрых ошибок")
-    
-    except Exception as e:
-        logger.error(f"❌ Ошибка перезагрузки handler: {e}")
 
 
 async def show_quick_errors_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -598,6 +626,8 @@ async def show_quick_errors_info(update: Update, context: ContextTypes.DEFAULT_T
         "4️⃣ Ошибка автоматически отправляется в группу\n\n"
         "<b>Для каких телефоний доступно:</b>\n"
         "Только для белых телефоний (с кнопками саппорта).\n\n"
+        "<b>Динамическое обновление:</b>\n"
+        "Изменения применяются мгновенно - перезапуск бота не требуется!\n\n"
     )
     
     if telephonies:
