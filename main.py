@@ -1,9 +1,6 @@
 """
-ОБНОВЛЁННАЯ ВЕРСИЯ: main.py
-Добавлены:
-✅ Graceful shutdown
-✅ Health check команда
-✅ Улучшенная обработка остановки
+ИСПРАВЛЕННАЯ ВЕРСИЯ: main.py
+Исправлены импорты для управления быстрыми ошибками
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -11,11 +8,11 @@ from telegram.ext import (
 )
 from config.settings import settings
 from utils.logger import logger
-from utils.shutdown import shutdown_handler  # ✅ НОВОЕ
+from utils.shutdown import shutdown_handler
 
 # Импортируем обработчики
 from handlers.commands import start_command
-from handlers.health import health_command  # ✅ НОВОЕ
+from handlers.health import health_command
 from handlers.callbacks import (
     role_choice_callback,
     tel_choice_callback,
@@ -36,6 +33,8 @@ from handlers.management import (
     remove_telephony_start, remove_telephony_process,
     broadcast_start, broadcast_process, broadcast_confirm,
     cancel_conversation,
+    # ✅ ДОБАВЛЯЕМ ИМПОРТ ФУНКЦИЙ ДЛЯ БЫСТРЫХ ОШИБОК
+    quick_errors_menu, toggle_quick_errors_callback, show_quick_errors_info,
     WAITING_MANAGER_ID, WAITING_MANAGER_ID_REMOVE,
     WAITING_TEL_NAME, WAITING_TEL_CODE, WAITING_TEL_TYPE, WAITING_TEL_GROUP,
     WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
@@ -51,7 +50,7 @@ from handlers.analytics import (
 )
 
 # Импортируем ConversationHandler для быстрых ошибок
-from handlers.quick_errors import quick_bmw_conv
+from handlers.quick_errors import quick_errors_conv, get_quick_errors_telephony_names
 
 
 def register_handlers(app: Application):
@@ -63,7 +62,7 @@ def register_handlers(app: Application):
     """
     # Команды
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("health", health_command))  # ✅ НОВОЕ
+    app.add_handler(CommandHandler("health", health_command))
     
     # ===== CONVERSATION HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
     
@@ -73,7 +72,8 @@ def register_handlers(app: Application):
         states={
             WAITING_MANAGER_ID: [MessageHandler(filters.TEXT | filters.FORWARDED, add_manager_process)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=True  # ✅ Убираем предупреждение
     )
     app.add_handler(add_manager_conv)
     
@@ -83,7 +83,8 @@ def register_handlers(app: Application):
         states={
             WAITING_MANAGER_ID_REMOVE: [MessageHandler(filters.TEXT, remove_manager_process)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=True  # ✅ Убираем предупреждение
     )
     app.add_handler(remove_manager_conv)
     
@@ -96,7 +97,8 @@ def register_handlers(app: Application):
             WAITING_TEL_TYPE: [CallbackQueryHandler(add_telephony_type, pattern="^tel_type_")],
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT, add_telephony_group)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=True  # ✅ Убираем предупреждение
     )
     app.add_handler(add_tel_conv)
     
@@ -106,7 +108,8 @@ def register_handlers(app: Application):
         states={
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT, remove_telephony_process)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=True  # ✅ Убираем предупреждение
     )
     app.add_handler(remove_tel_conv)
     
@@ -116,16 +119,43 @@ def register_handlers(app: Application):
         states={
             WAITING_BROADCAST_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_process)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)]
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=True  # ✅ Убираем предупреждение
     )
     app.add_handler(broadcast_conv)
     
-    # ConversationHandler для BMW
-    app.add_handler(quick_bmw_conv)
+    # ===== CONVERSATION HANDLER ДЛЯ БЫСТРЫХ ОШИБОК =====
+    
+    if quick_errors_conv:
+        # ✅ ИСПРАВЛЕНО: name уже задан при создании в quick_errors.py
+        app.add_handler(quick_errors_conv, group=0)
+        logger.info("✅ Система быстрых ошибок активирована")
+        
+        # Логируем доступные телефонии
+        telephony_names = get_quick_errors_telephony_names()
+        if telephony_names:
+            logger.info(f"📞 Быстрые ошибки доступны для: {', '.join(telephony_names)}")
+    else:
+        logger.warning("⚠️ Система быстрых ошибок отключена")
     
     # ===== CALLBACK HANDLERS ДЛЯ УПРАВЛЕНИЯ =====
     
     app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"))
+    
+    # ✅ ИСПРАВЛЕНО: Используем импортированные функции напрямую
+    app.add_handler(CallbackQueryHandler(
+        quick_errors_menu, 
+        pattern="^mgmt_quick_errors$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        toggle_quick_errors_callback, 
+        pattern="^toggle_qe_"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        show_quick_errors_info, 
+        pattern="^qe_info$"
+    ))
+    
     app.add_handler(CallbackQueryHandler(managers_menu, pattern="^mgmt_managers$"))
     app.add_handler(CallbackQueryHandler(list_managers, pattern="^mgmt_list_managers$"))
     app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"))
@@ -162,6 +192,10 @@ def register_handlers(app: Application):
         filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
         message_handler
     ))
+    
+    # ✅ ИСПРАВЛЕНО: Сохраняем ссылку на app глобально для перезагрузки
+    import sys
+    sys.modules['__main__'].app = app
     
     # Обработчик ошибок
     app.add_error_handler(error_handler)
@@ -203,7 +237,7 @@ def main():
             import traceback
             logger.error(traceback.format_exc())
         
-        # ===== ✅ НОВОЕ: РЕГИСТРАЦИЯ SHUTDOWN CALLBACKS =====
+        # ===== РЕГИСТРАЦИЯ SHUTDOWN CALLBACKS =====
         def stop_scheduler():
             """Остановка планировщика"""
             try:
@@ -216,7 +250,6 @@ def main():
             """Остановка приложения"""
             try:
                 logger.info("🛑 Остановка Telegram приложения...")
-                # Application остановится автоматически при sys.exit()
             except Exception as e:
                 logger.error(f"❌ Ошибка остановки приложения: {e}")
         
@@ -226,7 +259,6 @@ def main():
         
         # Устанавливаем обработчики сигналов
         shutdown_handler.setup_handlers()
-        # ===================================
         
         # Запуск polling (блокирует выполнение)
         logger.info("🔄 Запуск polling...")

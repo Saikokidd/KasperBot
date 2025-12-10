@@ -1,18 +1,22 @@
 """
-ИСПРАВЛЕНО: handlers/quick_errors.py
-Исправлена обработка SIP - игнорируем кнопки меню
+УНИВЕРСАЛЬНАЯ СИСТЕМА БЫСТРЫХ ОШИБОК
+Работает с любыми белыми телефониями, где включены быстрые ошибки
 
-ИЗМЕНЕНИЯ:
-✅ Фильтр ~filters.Regex для игнорирования кнопок меню
-✅ Улучшенное сообщение при неверном формате
-✅ Кнопка отмены при вводе SIP
+ИСПРАВЛЕНИЕ: name задаётся при создании ConversationHandler
 """
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import (
+    ContextTypes, ConversationHandler, MessageHandler, 
+    filters, CallbackQueryHandler
+)
 from database.models import db
 from keyboards.inline import get_quick_errors_keyboard
 from keyboards.reply import get_menu_by_role
-from config.constants import MESSAGES, QUICK_ERRORS, MAX_SIP_LENGTH, MAX_CUSTOM_ERROR_LENGTH, SIP_PATTERN
+from config.constants import (
+    MESSAGES, QUICK_ERRORS, MAX_SIP_LENGTH, 
+    MAX_CUSTOM_ERROR_LENGTH, SIP_PATTERN
+)
 from config.settings import settings
 from utils.state import get_user_role
 from utils.logger import logger
@@ -21,11 +25,65 @@ from utils.logger import logger
 WAITING_SIP, WAITING_CUSTOM_ERROR, SHOWING_ERRORS = range(3)
 
 
-async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора BMW из Reply меню"""
-    user_id = update.effective_user.id
+def get_quick_errors_telephonies():
+    """
+    Получить список телефоний с включёнными быстрыми ошибками
     
-    logger.info(f"🔵 BMW выбран user_id={user_id}")
+    Returns:
+        Список словарей с данными телефоний
+    """
+    return db.get_quick_errors_telephonies()
+
+
+def get_quick_errors_regex():
+    """
+    Построить regex для всех телефоний с быстрыми ошибками
+    
+    Returns:
+        Regex pattern (str) или None если нет телефоний
+    """
+    telephonies = get_quick_errors_telephonies()
+    
+    if not telephonies:
+        return None
+    
+    # Строим regex: ^(BMW|Wizard|Телефония3)$
+    names = [tel['name'] for tel in telephonies]
+    pattern = f"^({'|'.join(names)})$"
+    
+    logger.debug(f"📞 Regex для быстрых ошибок: {pattern}")
+    return pattern
+
+
+async def handle_telephony_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик выбора телефонии с быстрыми ошибками
+    
+    Универсальный - работает для любой белой телефонии
+    """
+    user_id = update.effective_user.id
+    tel_name = update.message.text.strip()
+    
+    logger.info(f"🔵 Выбрана телефония с быстрыми ошибками: {tel_name} от user_id={user_id}")
+    
+    # Ищем телефонию в списке активных
+    telephonies = get_quick_errors_telephonies()
+    selected_tel = None
+    
+    for tel in telephonies:
+        if tel['name'] == tel_name:
+            selected_tel = tel
+            break
+    
+    if not selected_tel:
+        logger.error(f"❌ Телефония {tel_name} не найдена среди доступных для быстрых ошибок")
+        await update.message.reply_text(
+            "⚠️ Эта телефония временно недоступна для быстрых ошибок."
+        )
+        return ConversationHandler.END
+    
+    # Сохраняем в контекст
+    context.user_data["quick_errors_tel"] = selected_tel
     
     # Проверяем, указан ли SIP сегодня
     if db.is_sip_valid_today(user_id):
@@ -39,7 +97,7 @@ async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sip = sip_data['sip_number']
         logger.info(f"✅ SIP уже указан сегодня: {sip}")
         
-        context.user_data["bmw_sip"] = sip
+        context.user_data["quick_errors_sip"] = sip
         
         await update.message.reply_text(
             MESSAGES["choose_quick_error"].format(sip=sip),
@@ -49,9 +107,8 @@ async def handle_bmw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.info(f"⚠️ SIP не указан, запрашиваем у user_id={user_id}")
         
-        # ✅ НОВОЕ: Кнопка отмены
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_sip")]
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_quick_errors")]
         ])
         
         await update.message.reply_text(
@@ -70,13 +127,12 @@ async def handle_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"📞 Введён SIP от user_id={user_id}: {sip_text}")
     
-    # ✅ ИСПРАВЛЕНИЕ: Валидация формата
+    # Валидация формата
     if not sip_text or len(sip_text) > MAX_SIP_LENGTH or not SIP_PATTERN.match(sip_text):
         logger.warning(f"⚠️ Неверный формат SIP: '{sip_text}' от user_id={user_id}")
         
-        # ✅ НОВОЕ: Кнопка отмены
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_sip")]
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_quick_errors")]
         ])
         
         await update.message.reply_text(
@@ -92,7 +148,7 @@ async def handle_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем SIP
     db.save_manager_sip(user_id, sip_text)
-    context.user_data["bmw_sip"] = sip_text
+    context.user_data["quick_errors_sip"] = sip_text
     
     logger.info(f"✅ SIP сохранён для user_id={user_id}: {sip_text}")
     
@@ -105,20 +161,22 @@ async def handle_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SHOWING_ERRORS
 
 
-async def cancel_sip_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    ✅ НОВОЕ: Отмена ввода SIP
-    """
+async def cancel_quick_errors(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена процесса быстрых ошибок"""
     query = update.callback_query
     await query.answer()
     
     user_id = update.effective_user.id
-    logger.info(f"❌ Отмена ввода SIP от user_id={user_id}")
+    logger.info(f"❌ Отмена быстрых ошибок от user_id={user_id}")
+    
+    # Очистка контекста
+    context.user_data.pop("quick_errors_tel", None)
+    context.user_data.pop("quick_errors_sip", None)
     
     role = get_user_role(context)
     current_menu = get_menu_by_role(role)
     
-    await query.message.edit_text("❌ Ввод SIP отменён. Используйте меню:")
+    await query.message.edit_text("❌ Отменено. Используйте меню:")
     await query.message.reply_text(
         "Выберите действие:",
         reply_markup=current_menu
@@ -140,33 +198,36 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
     error_code = query.data.split("_")[1]
     logger.info(f"🔘 Нажата кнопка ошибки {error_code} от user_id={user_id}")
     
-    # Получаем SIP
-    sip = context.user_data.get("bmw_sip")
+    # Получаем SIP и телефонию
+    sip = context.user_data.get("quick_errors_sip")
+    tel_data = context.user_data.get("quick_errors_tel")
     
+    # Проверки
     if not sip:
-        logger.warning(f"⚠️ SIP не найден в контексте для user_id={user_id}, проверяем БД...")
+        logger.error(f"❌ SIP не найден в контексте для user_id={user_id}")
         
+        # Пытаемся восстановить из БД
         if db.is_sip_valid_today(user_id):
             sip_data = db.get_manager_sip(user_id)
-            
             if sip_data and sip_data.get('sip_number'):
                 sip = sip_data['sip_number']
-                context.user_data["bmw_sip"] = sip
+                context.user_data["quick_errors_sip"] = sip
                 logger.info(f"✅ SIP восстановлен из БД: {sip}")
-            else:
-                logger.error(f"❌ SIP данные повреждены в БД для user_id={user_id}")
-                await query.message.edit_text(
-                    "⚠️ Ошибка: SIP не найден или повреждён.\n"
-                    "Попробуйте снова через меню 'Ошибки телефонии' → 'BMW'"
-                )
-                return ConversationHandler.END
-        else:
-            logger.error(f"❌ SIP не найден для user_id={user_id}")
+        
+        if not sip:
             await query.message.edit_text(
                 "⚠️ Ошибка: SIP не найден.\n"
-                "Попробуйте снова через меню 'Ошибки телефонии' → 'BMW'"
+                "Попробуйте снова через меню 'Ошибки телефонии'"
             )
             return ConversationHandler.END
+    
+    if not tel_data:
+        logger.error(f"❌ Данные телефонии не найдены для user_id={user_id}")
+        await query.message.edit_text(
+            "⚠️ Ошибка: данные телефонии потеряны.\n"
+            "Попробуйте снова через меню 'Ошибки телефонии'"
+        )
+        return ConversationHandler.END
     
     # Если "Свой вариант"
     if error_code == "10":
@@ -178,9 +239,14 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
     error_text = QUICK_ERRORS.get(error_code, "Неизвестная ошибка")
     logger.info(f"📤 Отправка быстрой ошибки: {error_text}")
     
-    # Отправляем в группу BMW
+    # Отправляем в группу
     success = await send_quick_error_to_group(
-        context.bot, user_id, username, sip, error_text
+        context.bot,
+        user_id,
+        username,
+        sip,
+        error_text,
+        tel_data
     )
     
     if not success:
@@ -191,7 +257,9 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
         MESSAGES["quick_error_sent"].format(sip=sip, error=error_text)
     )
     
-    context.user_data.pop("bmw_sip", None)
+    # Очистка контекста
+    context.user_data.pop("quick_errors_sip", None)
+    context.user_data.pop("quick_errors_tel", None)
     
     return ConversationHandler.END
 
@@ -202,14 +270,17 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
     username = update.effective_user.first_name or "Пользователь"
     
     error_text = update.message.text.strip()
-    sip = context.user_data.get("bmw_sip")
+    sip = context.user_data.get("quick_errors_sip")
+    tel_data = context.user_data.get("quick_errors_tel")
     
     logger.info(f"✏️ Custom ошибка от user_id={user_id}: {error_text[:50]}...")
     
-    if not sip:
-        logger.error(f"❌ SIP потерян для user_id={user_id}")
-        await update.message.reply_text("⚠️ Ошибка: SIP не найден.")
-        context.user_data.pop("bmw_sip", None)
+    if not sip or not tel_data:
+        logger.error(f"❌ SIP или телефония потеряны для user_id={user_id}")
+        await update.message.reply_text("⚠️ Ошибка: данные потеряны.")
+        
+        context.user_data.pop("quick_errors_sip", None)
+        context.user_data.pop("quick_errors_tel", None)
         return ConversationHandler.END
     
     # Валидация
@@ -222,12 +293,18 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
     
     # Отправляем в группу
     success = await send_quick_error_to_group(
-        context.bot, user_id, username, sip, error_text
+        context.bot,
+        user_id,
+        username,
+        sip,
+        error_text,
+        tel_data
     )
     
     if not success:
         await update.message.reply_text("⚠️ Не удалось отправить ошибку.")
-        context.user_data.pop("bmw_sip", None)
+        context.user_data.pop("quick_errors_sip", None)
+        context.user_data.pop("quick_errors_tel", None)
         return ConversationHandler.END
     
     role = get_user_role(context)
@@ -238,7 +315,8 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
         reply_markup=current_menu
     )
     
-    context.user_data.pop("bmw_sip", None)
+    context.user_data.pop("quick_errors_sip", None)
+    context.user_data.pop("quick_errors_tel", None)
     
     return ConversationHandler.END
 
@@ -251,9 +329,8 @@ async def handle_change_sip_callback(update: Update, context: ContextTypes.DEFAU
     user_id = update.effective_user.id
     logger.info(f"⚙️ Запрос на изменение SIP от user_id={user_id}")
     
-    # ✅ НОВОЕ: Кнопка отмены
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_sip")]
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_quick_errors")]
     ])
     
     await query.message.edit_text(
@@ -265,10 +342,31 @@ async def handle_change_sip_callback(update: Update, context: ContextTypes.DEFAU
     return WAITING_SIP
 
 
-async def send_quick_error_to_group(bot, user_id: int, username: str, sip: str, error_text: str) -> bool:
-    """Отправляет быструю ошибку в группу BMW"""
-    group_id = settings.BMW_GROUP_ID
-    tel_code = "bmw"
+async def send_quick_error_to_group(
+    bot, 
+    user_id: int, 
+    username: str, 
+    sip: str, 
+    error_text: str,
+    tel_data: dict
+) -> bool:
+    """
+    Отправляет быструю ошибку в группу телефонии
+    
+    Args:
+        bot: Экземпляр бота
+        user_id: ID пользователя
+        username: Имя пользователя
+        sip: SIP номер
+        error_text: Текст ошибки
+        tel_data: Данные телефонии {'name', 'code', 'group_id'}
+        
+    Returns:
+        True если успешно
+    """
+    group_id = tel_data['group_id']
+    tel_code = tel_data['code']
+    tel_name = tel_data['name']
     
     msg = f"От {username}\nSIP: {sip}  {error_text}"
     
@@ -282,9 +380,17 @@ async def send_quick_error_to_group(bot, user_id: int, username: str, sip: str, 
             reply_markup=keyboard
         )
         
-        db.log_error_report(user_id, username, tel_code, f"SIP: {sip} - {error_text}")
+        db.log_error_report(
+            user_id, 
+            username, 
+            tel_code, 
+            f"SIP: {sip} - {error_text}"
+        )
         
-        logger.info(f"✅ Быстрая ошибка BMW: user_id={user_id}, SIP={sip}")
+        logger.info(
+            f"✅ Быстрая ошибка: {tel_name} → группа {group_id}, "
+            f"user_id={user_id}, SIP={sip}"
+        )
         return True
         
     except Exception as e:
@@ -292,42 +398,90 @@ async def send_quick_error_to_group(bot, user_id: int, username: str, sip: str, 
         return False
 
 
-# ✅ ИСПРАВЛЕННЫЙ ConversationHandler
-quick_bmw_conv = ConversationHandler(
-    entry_points=[
-        MessageHandler(filters.Regex("^BMW$") & filters.ChatType.PRIVATE, handle_bmw_choice),
-        CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
-        CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$"),
-    ],
-    states={
-        WAITING_SIP: [
-            # ✅ ИСПРАВЛЕНИЕ: Игнорируем кнопки меню
+# ============================================================================
+# ДИНАМИЧЕСКОЕ СОЗДАНИЕ ConversationHandler
+# ============================================================================
+
+def create_quick_errors_conv():
+    """
+    Создать ConversationHandler для быстрых ошибок
+    
+    Returns:
+        ConversationHandler или None если нет доступных телефоний
+    """
+    # Получаем regex
+    regex_pattern = get_quick_errors_regex()
+    
+    if not regex_pattern:
+        logger.warning("⚠️ Нет телефоний с включёнными быстрыми ошибками")
+        return None
+    
+    logger.info(f"✅ Создание ConversationHandler для быстрых ошибок: {regex_pattern}")
+    
+    # Создаём фильтр для кнопок меню (чтобы исключить их)
+    menu_buttons_pattern = (
+        "^(Ошибки телефонии|Полезные ссылки|Статистика трубок|"
+        "Статистика менеджеров|Управление ботом|Статистика ошибок|◀️ Меню|"
+        "Звонари|Wizard)$"
+    )
+    
+    # ✅ ИСПРАВЛЕНО: Добавляем name при создании
+    return ConversationHandler(
+        name='quick_errors',  # ✅ Указываем name здесь
+        entry_points=[
             MessageHandler(
-                filters.TEXT & 
-                ~filters.COMMAND & 
-                ~filters.Regex("^(Ошибки телефонии|Полезные ссылки|Статистика трубок|Статистика менеджеров|Управление ботом|Статистика ошибок|◀️ Меню|BMW|Звонари|Wizard)$") & 
-                filters.ChatType.PRIVATE, 
-                handle_sip_input
+                filters.Regex(regex_pattern) & 
+                filters.ChatType.PRIVATE,
+                handle_telephony_choice
             ),
-            CallbackQueryHandler(cancel_sip_input, pattern="^cancel_sip$"),
-        ],
-        SHOWING_ERRORS: [
             CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
             CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$"),
         ],
-        WAITING_CUSTOM_ERROR: [
-            MessageHandler(
-                filters.TEXT & 
-                ~filters.COMMAND & 
-                filters.ChatType.PRIVATE, 
-                handle_custom_error_input
-            )
-        ]
-    },
-    fallbacks=[
-        CallbackQueryHandler(cancel_sip_input, pattern="^cancel_sip$"),
-    ],
-    allow_reentry=True,
-    per_chat=True,
-    per_user=True
-)
+        states={
+            WAITING_SIP: [
+                MessageHandler(
+                    filters.TEXT & 
+                    ~filters.COMMAND & 
+                    ~filters.Regex(menu_buttons_pattern) &
+                    filters.ChatType.PRIVATE,
+                    handle_sip_input
+                ),
+                CallbackQueryHandler(cancel_quick_errors, pattern="^cancel_quick_errors$"),
+            ],
+            SHOWING_ERRORS: [
+                CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
+                CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$"),
+            ],
+            WAITING_CUSTOM_ERROR: [
+                MessageHandler(
+                    filters.TEXT & 
+                    ~filters.COMMAND &
+                    filters.ChatType.PRIVATE,
+                    handle_custom_error_input
+                )
+            ]
+        },
+        fallbacks=[
+            CallbackQueryHandler(cancel_quick_errors, pattern="^cancel_quick_errors$"),
+        ],
+        allow_reentry=True,
+        per_chat=True,
+        per_user=True,
+        per_message=True  # ✅ Убираем предупреждение
+    )
+
+
+# Создаём handler при импорте модуля
+quick_errors_conv = create_quick_errors_conv()
+
+
+# Функция для внешнего использования (логирование)
+def get_quick_errors_telephony_names():
+    """Получить список названий телефоний для быстрых ошибок"""
+    telephonies = get_quick_errors_telephonies()
+    return [tel['name'] for tel in telephonies]
+
+
+# ============================================================================
+# КОНЕЦ ФАЙЛА handlers/quick_errors.py
+# ============================================================================

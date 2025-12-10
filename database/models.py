@@ -572,7 +572,113 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка сброса SIP: {e}")
             return 0
+    def toggle_quick_errors(self, code: str) -> Optional[bool]:
+        """
+        Переключить быстрые ошибки для телефонии
+        
+        Args:
+            code: Код телефонии
+            
+        Returns:
+            Новое состояние (True/False) или None при ошибке
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                
+                # Получаем текущее состояние
+                cursor.execute(
+                    "SELECT quick_errors_enabled FROM telephonies WHERE code = ?",
+                    (code,)
+                )
+                row = cursor.fetchone()
+                
+                if not row:
+                    logger.error(f"❌ Телефония {code} не найдена")
+                    return None
+                
+                current_state = bool(row[0])
+                new_state = not current_state
+                
+                # Переключаем
+                cursor.execute(
+                    "UPDATE telephonies SET quick_errors_enabled = ? WHERE code = ?",
+                    (int(new_state), code)
+                )
+                conn.commit()
+                
+                logger.info(f"✅ Быстрые ошибки для {code}: {new_state}")
+                return new_state
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка переключения быстрых ошибок: {e}")
+            return None
 
+
+    def get_quick_errors_telephonies(self) -> List[Dict]:
+        """
+        Получить белые телефонии с быстрыми ошибками
+        
+        Returns:
+            Список телефоний с включёнными быстрыми ошибками
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT name, code, group_id 
+                    FROM telephonies 
+                    WHERE type = 'white' 
+                    AND enabled = 1 
+                    AND quick_errors_enabled = 1
+                    ORDER BY name
+                """)
+                rows = cursor.fetchall()
+            
+            return [
+                {
+                    "name": row[0],
+                    "code": row[1],
+                    "group_id": row[2]
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения телефоний для быстрых ошибок: {e}")
+            return []
+
+
+    def get_white_telephonies_with_qe_status(self) -> List[Dict]:
+        """
+        Получить все белые телефонии со статусом быстрых ошибок
+        
+        Returns:
+            Список словарей с информацией о телефониях
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT name, code, group_id, enabled, quick_errors_enabled
+                    FROM telephonies 
+                    WHERE type = 'white'
+                    ORDER BY name
+                """)
+                rows = cursor.fetchall()
+            
+            return [
+                {
+                    "name": row[0],
+                    "code": row[1],
+                    "group_id": row[2],
+                    "enabled": bool(row[3]),
+                    "quick_errors_enabled": bool(row[4])
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения белых телефоний: {e}")
+            return []
 
 # Глобальный экземпляр БД
 db = Database()

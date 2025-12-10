@@ -4,6 +4,7 @@ Inline клавиатуры (кнопки в сообщениях)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from config.constants import QUICK_ERROR_BUTTONS
 from database.models import db
+from typing import List, Dict
 
 
 def get_telephony_keyboard() -> InlineKeyboardMarkup:
@@ -84,10 +85,11 @@ def get_support_keyboard(user_id: int, tel_code: str) -> InlineKeyboardMarkup:
 # ===== НОВЫЕ КЛАВИАТУРЫ ДЛЯ УПРАВЛЕНИЯ =====
 
 def get_management_menu() -> InlineKeyboardMarkup:
-    """Главное меню управления ботом"""
+    """Главное меню управления ботом - ОБНОВЛЁННАЯ ВЕРСИЯ"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Менеджеры", callback_data="mgmt_managers")],
         [InlineKeyboardButton("📞 Телефонии", callback_data="mgmt_telephonies")],
+        [InlineKeyboardButton("⚡️ Быстрые ошибки", callback_data="mgmt_quick_errors")],
         [InlineKeyboardButton("📢 Рассылка", callback_data="mgmt_broadcast")],
     ])
 
@@ -139,5 +141,49 @@ def get_quick_errors_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚙️ Изменить SIP", callback_data="change_sip")
         ]
     ]
+    
+    return InlineKeyboardMarkup(buttons)
+
+def get_quick_errors_management_keyboard(telephonies: List[Dict]) -> InlineKeyboardMarkup:
+    """
+    Клавиатура управления быстрыми ошибками
+    
+    Args:
+        telephonies: Список белых телефоний со статусом
+        
+    Returns:
+        InlineKeyboardMarkup с переключателями
+    """
+    buttons = []
+    
+    for tel in telephonies:
+        # Иконка статуса
+        if tel['enabled']:
+            if tel['quick_errors_enabled']:
+                icon = "✅"
+            else:
+                icon = "❌"
+        else:
+            icon = "⚠️"  # Телефония отключена
+        
+        # Текст кнопки
+        if not tel['enabled']:
+            button_text = f"{icon} {tel['name']} (отключена)"
+            callback = "noop"  # Не делать ничего
+        else:
+            button_text = f"{icon} {tel['name']}"
+            callback = f"toggle_qe_{tel['code']}"
+        
+        buttons.append([
+            InlineKeyboardButton(button_text, callback_data=callback)
+        ])
+    
+    # Дополнительные кнопки
+    buttons.append([
+        InlineKeyboardButton("ℹ️ Информация", callback_data="qe_info")
+    ])
+    buttons.append([
+        InlineKeyboardButton("« Назад", callback_data="mgmt_menu")
+    ])
     
     return InlineKeyboardMarkup(buttons)

@@ -471,3 +471,149 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('broadcast_chat_id', None)
     
     return ConversationHandler.END
+
+
+# ===== УПРАВЛЕНИЕ БЫСТРЫМИ ОШИБКАМИ =====
+
+async def quick_errors_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню управления быстрыми ошибками"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Получаем все белые телефонии со статусом
+    from database.models import db
+    telephonies = db.get_white_telephonies_with_qe_status()
+    
+    if not telephonies:
+        await query.message.edit_text(
+            "⚠️ <b>Быстрые ошибки</b>\n\n"
+            "Нет белых телефоний в системе.\n"
+            "Добавьте белую телефонию чтобы использовать быстрые ошибки.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("« Назад", callback_data="mgmt_menu")]
+            ])
+        )
+        return
+    
+    # Формируем клавиатуру
+    from keyboards.inline import get_quick_errors_management_keyboard
+    keyboard = get_quick_errors_management_keyboard(telephonies)
+    
+    # Подсчитываем статистику
+    enabled_count = sum(1 for t in telephonies if t['quick_errors_enabled'])
+    total_count = len(telephonies)
+    
+    text = (
+        f"⚡️ <b>Управление быстрыми ошибками</b>\n\n"
+        f"📊 Статус: {enabled_count}/{total_count} активно\n\n"
+        f"Выберите телефонию для переключения:\n"
+        f"✅ = Включены | ❌ = Выключены"
+    )
+    
+    await query.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+async def toggle_quick_errors_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключить быстрые ошибки для телефонии"""
+    query = update.callback_query
+    await query.answer("Переключаю...")
+    
+    # Извлекаем код телефонии из callback_data
+    # Формат: toggle_qe_bmw
+    tel_code = query.data.split("_")[2]
+    
+    logger.info(f"⚡️ Переключение быстрых ошибок для {tel_code}")
+    
+    # Переключаем в БД
+    from database.models import db
+    new_state = db.toggle_quick_errors(tel_code)
+    
+    if new_state is None:
+        await query.answer("❌ Ошибка переключения", show_alert=True)
+        return
+    
+    # Уведомляем пользователя
+    status_text = "✅ Включены" if new_state else "❌ Выключены"
+    await query.answer(f"⚡️ Быстрые ошибки: {status_text}", show_alert=True)
+    
+    # Обновляем меню
+    await quick_errors_menu(update, context)
+    
+    # ВАЖНО: Перезагружаем ConversationHandler
+    logger.info("🔄 Пересоздание ConversationHandler для быстрых ошибок...")
+    
+    try:
+        # Удаляем старый handler
+        from main import app  # Предполагаем что app доступен глобально
+        
+        # Находим handler по имени (если задавали name при add_handler)
+        for handler in app.handlers[0]:  # Группа 0
+            if hasattr(handler, 'name') and handler.name == 'quick_errors':
+                app.remove_handler(handler)
+                logger.info("✅ Старый handler удалён")
+                break
+        
+        # Создаём новый
+        from handlers.quick_errors import create_quick_errors_conv
+        new_conv = create_quick_errors_conv()
+        
+        if new_conv:
+            app.add_handler(new_conv, group=0)
+            new_conv.name = 'quick_errors'  # Задаём имя для поиска
+            logger.info("✅ Новый handler добавлен")
+            
+            # Логируем доступные телефонии
+            from handlers.quick_errors import get_quick_errors_telephony_names
+            names = get_quick_errors_telephony_names()
+            logger.info(f"📞 Быстрые ошибки доступны для: {', '.join(names)}")
+        else:
+            logger.warning("⚠️ Нет активных телефоний для быстрых ошибок")
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка перезагрузки handler: {e}")
+
+
+async def show_quick_errors_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать информацию о системе быстрых ошибок"""
+    query = update.callback_query
+    await query.answer()
+    
+    from database.models import db
+    telephonies = db.get_white_telephonies_with_qe_status()
+    
+    info_text = (
+        "ℹ️ <b>О БЫСТРЫХ ОШИБКАХ</b>\n\n"
+        "<b>Что это:</b>\n"
+        "Система быстрых ошибок позволяет менеджерам отправлять стандартные ошибки "
+        "через встроенное меню с кнопками, указав только свой SIP.\n\n"
+        "<b>Как работает:</b>\n"
+        "1️⃣ Менеджер нажимает на белую телефонию (например BMW)\n"
+        "2️⃣ Указывает свой SIP один раз в день\n"
+        "3️⃣ Выбирает тип ошибки из списка (10 вариантов)\n"
+        "4️⃣ Ошибка автоматически отправляется в группу\n\n"
+        "<b>Для каких телефоний доступно:</b>\n"
+        "Только для белых телефоний (с кнопками саппорта).\n\n"
+    )
+    
+    if telephonies:
+        info_text += "<b>Ваши белые телефонии:</b>\n"
+        for tel in telephonies:
+            status = "✅ Включены" if tel['quick_errors_enabled'] else "❌ Выключены"
+            info_text += f"• {tel['name']}: {status}\n"
+    else:
+        info_text += "⚠️ Нет белых телефоний в системе."
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("« Назад", callback_data="mgmt_quick_errors")]
+    ])
+    
+    await query.message.edit_text(
+        info_text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
