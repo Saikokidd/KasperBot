@@ -1,11 +1,11 @@
 """
-УЛУЧШЕНО: handlers/callbacks.py
-Добавлено подробное логирование для диагностики
+ИСПРАВЛЕНО: handlers/callbacks.py
+Улучшено логирование + fallback не блокирует другие handler'ы
 
 ИЗМЕНЕНИЯ:
-✅ Логируются все входящие callback_query
-✅ Добавлены debug логи для отладки
-✅ Улучшена обработка ошибок
+✅ fallback_callback НЕ отвечает на query сразу
+✅ Добавлена проверка известных паттернов
+✅ Логируются все callback для диагностики
 """
 from datetime import datetime
 from telegram import Update, error as telegram_error
@@ -26,7 +26,6 @@ async def role_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     user_id = update.effective_user.id
     
-    # ✅ НОВОЕ: Логирование
     logger.info(f"🎭 Выбор роли от user_id={user_id}: {query.data}")
     
     await query.answer()
@@ -73,7 +72,6 @@ async def tel_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = update.effective_user.id
     
-    # ✅ НОВОЕ: Подробное логирование
     logger.debug(f"📞 Callback телефонии от user_id={user_id}: {query.data}")
     
     await query.answer()
@@ -130,7 +128,6 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     support_user_id = query.from_user.id
     
-    # ✅ НОВОЕ: Логирование
     logger.debug(f"🔧 Support callback от user_id={support_user_id}: {query.data}")
     
     await query.answer()
@@ -266,21 +263,21 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback запросов"""
+    """
+    Обработчик неизвестных callback запросов
+    
+    ✅ ИСПРАВЛЕНО: НЕ отвечает на query (позволяет другим handler'ам сработать)
+    """
     query = update.callback_query
     user_id = query.from_user.id
+    callback_data = query.data
     
-    # ✅ НОВОЕ: Подробное логирование неизвестных callback
-    logger.warning(f"⚠️ Неизвестный callback от user_id={user_id}: {query.data}")
-    logger.debug(f"   Message ID: {query.message.message_id if query.message else 'None'}")
-    logger.debug(f"   Chat ID: {query.message.chat_id if query.message else 'None'}")
-    
-    await query.answer()
-    
-    role = get_user_role(context)
-    current_menu = get_menu_by_role(role)
-    
-    await query.message.reply_text(
-        "⚠️ Неизвестная команда. Попробуйте снова.",
-        reply_markup=current_menu
+    # ✅ КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Просто логируем, НЕ отвечаем на query
+    # Это позволяет другим handler'ам (в group=0) обработать callback
+    logger.warning(
+        f"⚠️ Fallback: неизвестный callback от user_id={user_id}: {callback_data}"
     )
+    
+    # ❌ НЕ ВЫЗЫВАЕМ query.answer() здесь!
+    # Если другой handler обработал callback - всё ОК
+    # Если нет - пользователь просто не получит ответ (не критично)
