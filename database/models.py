@@ -248,12 +248,16 @@ class Database:
             return False
     
     def get_all_telephonies(self) -> List[Dict]:
-        """Возвращает список всех телефоний"""
+        """
+        Возвращает список всех телефоний
+        
+        ✅ ИСПРАВЛЕНО: Теперь возвращает quick_errors_enabled
+        """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT name, code, type, group_id, enabled FROM telephonies WHERE enabled = 1 ORDER BY name"
+                    "SELECT name, code, type, group_id, enabled, quick_errors_enabled FROM telephonies WHERE enabled = 1 ORDER BY name"
                 )
                 rows = cursor.fetchall()
             
@@ -263,7 +267,8 @@ class Database:
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4]
+                    "enabled": row[4],
+                    "quick_errors_enabled": bool(row[5])  # ✅ ДОБАВЛЕНО
                 }
                 for row in rows
             ]
@@ -272,12 +277,16 @@ class Database:
             return []
     
     def get_telephony_by_code(self, code: str) -> Optional[Dict]:
-        """Получает телефонию по коду"""
+        """
+        Получает телефонию по коду
+        
+        ✅ ИСПРАВЛЕНО: Теперь возвращает quick_errors_enabled
+        """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT name, code, type, group_id, enabled FROM telephonies WHERE code = ?",
+                    "SELECT name, code, type, group_id, enabled, quick_errors_enabled FROM telephonies WHERE code = ?",
                     (code,)
                 )
                 row = cursor.fetchone()
@@ -288,7 +297,8 @@ class Database:
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4]
+                    "enabled": row[4],
+                    "quick_errors_enabled": bool(row[5])  # ✅ ДОБАВЛЕНО
                 }
             return None
         except Exception as e:
