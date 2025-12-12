@@ -1,11 +1,11 @@
 """
-main.py - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ
-Правильный порядок handlers для работы quick_errors
+main.py - ПОЛНАЯ ВЕРСИЯ
+С поддержкой Inline выбора телефонии
 
-КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
-✅ quick_errors ConversationHandler в group=0 (ДО message_handler!)
-✅ message_handler в group=1 (ПОСЛЕ quick_errors)
-✅ Теперь quick_errors перехватывает BMW/Звонари ПЕРВЫМ
+ИЗМЕНЕНИЯ:
+✅ Добавлен import handle_telephony_selection_callback
+✅ Зарегистрирован callback для выбора телефонии (group=0)
+✅ quick_errors опционален (работает если включён)
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -25,6 +25,9 @@ from handlers.callbacks import (
 )
 from handlers.messages import message_handler
 from handlers.errors import error_handler
+
+# ✅ НОВОЕ: Импорт обработчика Inline выбора телефонии
+from handlers.menu import handle_telephony_selection_callback
 
 from handlers.management import (
     show_management_menu,
@@ -61,7 +64,8 @@ async def fallback_callback(update, context):
         'mgmt_', 'role_', 'tel_', 'fix_', 'wait_', 'wrong_', 'sim_',
         'qerr_', 'cancel_quick_errors', 'change_sip',
         'stats_', 'dash_', 'toggle_qe_', 'qe_info',
-        'broadcast_confirm', 'tel_type_', 'noop'
+        'broadcast_confirm', 'tel_type_', 'noop',
+        'select_tel_'  # ✅ НОВОЕ
     ]
     
     is_known = any(query.data.startswith(p) for p in known_patterns)
@@ -73,11 +77,11 @@ async def fallback_callback(update, context):
 
 def register_handlers(app: Application):
     """
-    ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильный порядок handlers
+    Регистрация всех обработчиков
     
     ПОРЯДОК:
     1. group=-1: Команды
-    2. group=0: Callbacks + quick_errors ConversationHandler
+    2. group=0: Callbacks + quick_errors ConversationHandler (опционально)
     3. group=1: Остальные ConversationHandlers
     4. group=2: message_handler (ПОСЛЕДНИМ!)
     """
@@ -89,6 +93,13 @@ def register_handlers(app: Application):
     logger.info("✅ Команды (group=-1)")
     
     # ===== GROUP 0: CALLBACKS + QUICK_ERRORS =====
+    
+    # ✅ НОВОЕ: Выбор телефонии через Inline кнопки
+    app.add_handler(
+        CallbackQueryHandler(handle_telephony_selection_callback, pattern="^select_tel_"),
+        group=0
+    )
+    logger.info("✅ Inline выбор телефонии зарегистрирован (group=0)")
     
     # Управление
     app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"), group=0)
@@ -124,7 +135,7 @@ def register_handlers(app: Application):
     
     logger.info("✅ Callbacks (group=0)")
     
-    # ✅ КРИТИЧЕСКИ ВАЖНО: quick_errors В GROUP 0 (до message_handler!)
+    # ✅ ОПЦИОНАЛЬНО: quick_errors В GROUP 0 (если включены быстрые ошибки)
     quick_errors_conv = get_quick_errors_conv()
     
     if quick_errors_conv:
@@ -135,7 +146,7 @@ def register_handlers(app: Application):
         if telephony_names:
             logger.info(f"   📞 Быстрые ошибки: {', '.join(telephony_names)}")
     else:
-        logger.warning("⚠️ quick_errors отключены (нет телефоний)")
+        logger.info("ℹ️ quick_errors отключены (нет телефоний с quick_errors_enabled=1)")
     
     # ===== GROUP 1: ОСТАЛЬНЫЕ CONVERSATIONHANDLERS =====
     

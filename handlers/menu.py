@@ -1,14 +1,19 @@
 """
-Обновленная handlers/menu.py - ПОЛНАЯ ВЕРСИЯ
-Изменён обработчик кнопки "Ошибки телефонии" - теперь показывает Reply меню
+handlers/menu.py - ВРЕМЕННОЕ РЕШЕНИЕ
+Используем Inline клавиатуру вместо Reply
+
+ИЗМЕНЕНИЯ:
+✅ handle_telephony_errors_button показывает Inline кнопки
+✅ Добавлен обработчик callback для выбора телефонии
+✅ Работает ВСЕГДА (не зависит от ConversationHandler)
 """
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from config.constants import USEFUL_LINKS, MESSAGES
-from keyboards.reply import get_menu_by_role, get_telephony_menu  # ✅ ДОБАВЛЕНО
+from keyboards.reply import get_menu_by_role
 from keyboards.inline import get_management_menu
-from utils.state import get_user_role, set_support_mode, clear_tel_choice
+from utils.state import get_user_role, set_support_mode, clear_tel_choice, set_tel_choice
 from utils.logger import logger
 
 
@@ -18,21 +23,84 @@ async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(MESSAGES["support_prompt"])
 
 
-# ✅ ИЗМЕНЕНО: Теперь показывает Reply меню вместо Inline
 async def handle_telephony_errors_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Обработчик кнопки "Ошибки телефонии"
-    Показывает Reply клавиатуру с выбором телефонии
+    ✅ ВРЕМЕННОЕ РЕШЕНИЕ: Inline клавиатура вместо Reply
     
     Args:
         update: Update объект
         context: Контекст пользователя
     """
-    clear_tel_choice(context)  # Сбрасываем предыдущий выбор
+    clear_tel_choice(context)
+    
+    # Получаем все телефонии из БД
+    from database.models import db
+    telephonies = db.get_all_telephonies()
+    
+    if not telephonies:
+        await update.message.reply_text(
+            "⚠️ Нет доступных телефоний.\n"
+            "Обратитесь к администратору."
+        )
+        return
+    
+    # Создаём Inline кнопки
+    buttons = []
+    for tel in telephonies:
+        buttons.append([
+            InlineKeyboardButton(
+                tel['name'], 
+                callback_data=f"select_tel_{tel['code']}"
+            )
+        ])
+    
+    keyboard = InlineKeyboardMarkup(buttons)
     
     await update.message.reply_text(
         MESSAGES["choose_telephony"],
-        reply_markup=get_telephony_menu()  # ✅ Reply клавиатура
+        reply_markup=keyboard
+    )
+
+
+async def handle_telephony_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ✅ НОВОЕ: Обработчик Inline кнопок выбора телефонии
+    
+    Args:
+        update: Update объект
+        context: Контекст пользователя
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем код телефонии из callback_data
+    # Формат: select_tel_auro
+    tel_code = query.data.split("_")[2]
+    
+    logger.info(f"📞 Выбрана телефония через Inline: {tel_code}")
+    
+    # Получаем данные телефонии из БД
+    from database.models import db
+    tel = db.get_telephony_by_code(tel_code)
+    
+    if not tel:
+        await query.message.edit_text(
+            "⚠️ Телефония не найдена.\n"
+            "Попробуйте снова."
+        )
+        return
+    
+    # Сохраняем выбор
+    set_tel_choice(context, tel['name'], tel['code'])
+    
+    logger.info(f"✅ User {query.from_user.id} выбрал телефонию: {tel['name']} ({tel['code']})")
+    
+    # Уведомляем пользователя
+    await query.message.edit_text(
+        f"✅ Вы выбрали: <b>{tel['name']}</b>\n\n"
+        f"📝 Теперь отправьте описание ошибки\n"
+        f"⏱ Выбор активен 10 минут.",
+        parse_mode="HTML"
     )
 
 
@@ -105,7 +173,6 @@ async def handle_errors_stats_button(update: Update, context: ContextTypes.DEFAU
     )
 
 
-# ✅ НОВОЕ: Обработчик кнопки "◀️ Меню" - возврат в главное меню
 async def handle_back_to_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик кнопки "◀️ Меню" - возврат в главное меню
@@ -150,7 +217,7 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Статистика менеджеров": handle_managers_stats_button,
         "Управление ботом": handle_bot_management_button,
         "Статистика ошибок": handle_errors_stats_button,
-        "◀️ Меню": handle_back_to_menu_button,  # ✅ ДОБАВЛЕНО
+        "◀️ Меню": handle_back_to_menu_button,
     }
     
     action = menu_actions.get(text)

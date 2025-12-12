@@ -1,11 +1,11 @@
 """
-handlers/quick_errors.py - ФИНАЛЬНОЕ РЕШЕНИЕ
-Единый ConversationHandler обрабатывает ВСЁ
+handlers/quick_errors.py - КРИТИЧЕСКИЙ ФИКС
+Теперь НЕ блокирует обычные телефонии
 
-РЕШЕНИЕ ПРОБЛЕМЫ:
-✅ entry_points слушает текст телефоний (BMW, Звонари и т.д.)
-✅ НЕ конфликтует с messages.py (разные группы handlers)
-✅ Автоматически запускается при выборе телефонии с quick_errors
+ИЗМЕНЕНИЯ:
+✅ Проверка quick_errors_enabled перед обработкой
+✅ Если быстрые ошибки выключены -> fallback на обычный механизм
+✅ Не блокирует message_handler для обычных телефоний
 """
 from telegram import Update
 from telegram.ext import (
@@ -16,7 +16,7 @@ from database.models import db
 from keyboards.inline import get_quick_errors_keyboard
 from keyboards.reply import get_menu_by_role
 from config.constants import MESSAGES, QUICK_ERRORS, MAX_SIP_LENGTH, MAX_CUSTOM_ERROR_LENGTH, SIP_PATTERN
-from utils.state import get_user_role
+from utils.state import get_user_role, set_tel_choice
 from utils.logger import logger
 from typing import List
 
@@ -25,7 +25,7 @@ WAITING_SIP, WAITING_CUSTOM_ERROR, SHOWING_ERRORS = range(3)
 
 
 def get_quick_errors_telephony_names() -> List[str]:
-    """Получить телефонии с быстрыми ошибками"""
+    """Получить телефонии с ВКЛЮЧЁННЫМИ быстрыми ошибками"""
     try:
         telephonies = db.get_quick_errors_telephonies()
         names = [tel['name'] for tel in telephonies]
@@ -33,7 +33,7 @@ def get_quick_errors_telephony_names() -> List[str]:
         if names:
             logger.info(f"✅ Быстрые ошибки: {', '.join(names)}")
         else:
-            logger.warning("⚠️ Нет телефоний с быстрыми ошибками")
+            logger.warning("⚠️ Нет телефоний с включёнными быстрыми ошибками")
         
         return names
     except Exception as e:
@@ -43,9 +43,10 @@ def get_quick_errors_telephony_names() -> List[str]:
 
 async def handle_quick_error_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    ✅ ФИНАЛЬНОЕ РЕШЕНИЕ: Entry point - выбор телефонии
+    ✅ КРИТИЧЕСКИЙ ФИКС: Проверяем quick_errors_enabled
     
-    Вызывается НАПРЯМУЮ когда user пишет название телефонии
+    Если быстрые ошибки ВЫКЛЮЧЕНЫ -> возвращаем ConversationHandler.END
+    Это позволит message_handler обработать выбор как обычно
     """
     user_id = update.effective_user.id
     text = update.message.text
@@ -53,7 +54,7 @@ async def handle_quick_error_choice(update: Update, context: ContextTypes.DEFAUL
     logger.info(f"⚡️ Quick error: user {user_id} выбрал '{text}'")
     
     # Получаем телефонию из БД
-    telephonies = db.get_quick_errors_telephonies()
+    telephonies = db.get_all_telephonies()
     tel_data = None
     
     for tel in telephonies:
@@ -62,8 +63,28 @@ async def handle_quick_error_choice(update: Update, context: ContextTypes.DEFAUL
             break
     
     if not tel_data:
-        logger.error(f"❌ Телефония '{text}' не найдена")
+        logger.error(f"❌ Телефония '{text}' не найдена в БД")
         return ConversationHandler.END
+    
+    # ✅ КРИТИЧЕСКИЙ ФИХ: Проверяем quick_errors_enabled
+    if not tel_data.get('quick_errors_enabled', False):
+        logger.info(f"ℹ️ Быстрые ошибки выключены для {text} -> fallback на обычный механизм")
+        
+        # Устанавливаем выбор телефонии для message_handler
+        set_tel_choice(context, tel_data['name'], tel_data['code'])
+        
+        # Уведомляем пользователя
+        await update.message.reply_text(
+            f"✅ Вы выбрали: <b>{tel_data['name']}</b>\n\n"
+            f"📝 Теперь отправьте описание ошибки\n"
+            f"⏱ Выбор активен 10 минут.",
+            parse_mode="HTML"
+        )
+        
+        # Завершаем ConversationHandler - дальше обработает message_handler
+        return ConversationHandler.END
+    
+    # Быстрые ошибки ВКЛЮЧЕНЫ - продолжаем обычную логику
     
     # Сохраняем данные телефонии
     context.user_data['quick_error_tel_name'] = tel_data['name']
@@ -284,25 +305,22 @@ async def send_quick_error_to_group(
 
 def get_quick_errors_conv():
     """
-    ✅ ФИНАЛЬНОЕ РЕШЕНИЕ: ConversationHandler с текстовыми entry_points
-    
-    РЕГИСТРАЦИЯ В main.py:
-    app.add_handler(quick_errors_conv, group=0)  # ДО message_handler!
+    ✅ КРИТИЧЕСКИЙ ФИКС: Entry points теперь слушают ТОЛЬКО телефонии с quick_errors_enabled=1
     """
     telephony_names = get_quick_errors_telephony_names()
     
     if not telephony_names:
-        logger.warning("⚠️ Нет телефоний с быстрыми ошибками")
+        logger.warning("⚠️ Нет телефоний с включёнными быстрыми ошибками")
         return None
     
-    # Фильтр для entry_points
+    # ✅ ВАЖНО: Фильтр только для телефоний с quick_errors_enabled=1
     telephony_filter = filters.Regex(f"^({'|'.join(telephony_names)})$")
     
-    logger.info(f"✅ ConversationHandler для: {', '.join(telephony_names)}")
+    logger.info(f"✅ ConversationHandler ТОЛЬКО для: {', '.join(telephony_names)}")
     
     conv = ConversationHandler(
         entry_points=[
-            # ✅ Слушаем текст телефоний (BMW, Звонари и т.д.)
+            # Слушаем только телефонии с ВКЛЮЧЁННЫМИ быстрыми ошибками
             MessageHandler(
                 telephony_filter & filters.ChatType.PRIVATE, 
                 handle_quick_error_choice
