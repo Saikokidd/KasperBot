@@ -1,11 +1,11 @@
 """
-handlers/messages.py - ПОЛНАЯ ВЕРСИЯ С ДИНАМИЧЕСКОЙ ПРОВЕРКОЙ
-Проверяет БД при КАЖДОМ выборе телефонии
+handlers/messages.py - ФИНАЛЬНАЯ ВЕРСИЯ
+БЕЗ обработки выбора телефоний (это делает quick_errors.py)
 
-КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ:
-✅ handle_telephony_choice() проверяет quick_errors_enabled НАПРЯМУЮ из БД
-✅ Если включены - НЕ обрабатывает (пропускает для quick_errors.py)
-✅ Если выключены - обрабатывает как обычную телефонию
+КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
+✅ УДАЛЕНА функция handle_telephony_choice()
+✅ message_handler НЕ проверяет названия телефоний
+✅ Всё, что связано с телефониями, обрабатывает quick_errors ConversationHandler
 """
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
@@ -17,8 +17,7 @@ from services.telephony_service import telephony_service
 from keyboards.reply import get_menu_by_role
 from utils.state import (
     get_user_role, is_support_mode, set_support_mode,
-    get_tel_choice, clear_tel_choice, is_tel_choice_expired,
-    set_tel_choice
+    get_tel_choice, clear_tel_choice, is_tel_choice_expired
 )
 from utils.logger import logger
 from handlers.menu import handle_menu_button
@@ -66,80 +65,18 @@ async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_T
     return True
 
 
-async def handle_telephony_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Обрабатывает выбор телефонии из Reply кнопок (BMW, Звонари, Аврора, Berlin)
-    
-    ✅ КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Проверяет БД динамически
-    
-    Args:
-        update: Update объект
-        context: Контекст пользователя
-        
-    Returns:
-        True если обработано как выбор телефонии
-    """
-    text = update.message.text
-    
-    # Получаем все телефонии из БД
-    from database.models import db
-    telephonies = db.get_all_telephonies()
-    
-    # Создаём словарь название → телефония
-    tel_map = {}
-    if telephonies:
-        for tel in telephonies:
-            tel_map[tel['name']] = tel
-    else:
-        # Фолбэк на старые (если БД пустая)
-        tel_map = {
-            "BMW": {"name": "BMW", "code": "bmw", "quick_errors_enabled": False},
-            "Звонари": {"name": "Звонари", "code": "zvon", "quick_errors_enabled": False}
-        }
-    
-    # Проверяем, является ли текст названием телефонии
-    if text in tel_map:
-        tel_data = tel_map[text]
-        tel_name = tel_data['name']
-        tel_code = tel_data['code']
-        
-        # ✅ КРИТИЧЕСКИ ВАЖНО: Проверяем quick_errors_enabled
-        quick_errors = tel_data.get('quick_errors_enabled', False)
-        
-        logger.info(
-            f"📞 User {update.effective_user.id} выбрал {tel_name} "
-            f"(quick_errors={quick_errors})"
-        )
-        
-        # ✅ ЕСЛИ БЫСТРЫЕ ОШИБКИ ВКЛЮЧЕНЫ - НЕ ОБРАБАТЫВАЕМ
-        if quick_errors:
-            logger.info(f"⚡️ {tel_name}: быстрые ошибки ВКЛЮЧЕНЫ - пропускаем для quick_errors.py")
-            # Возвращаем False - пусть обработает quick_errors.py
-            return False
-        
-        # ✅ ИНАЧЕ - ОБЫЧНАЯ ОБРАБОТКА
-        logger.info(f"📝 {tel_name}: обычный режим (quick_errors выключены)")
-        
-        # Сохраняем выбор
-        set_tel_choice(context, tel_name, tel_code)
-        
-        await update.message.reply_text(
-            f"✅ Вы выбрали: <b>{tel_name}</b>\n\n"
-            f"📝 Теперь отправьте описание ошибки",
-            parse_mode="HTML"
-        )
-        return True
-    
-    return False
-
-
 async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сообщение как описание ошибки телефонии"""
+    """
+    Обрабатывает сообщение как описание ошибки телефонии
+    
+    ✅ ПРИМЕЧАНИЕ: Выбор телефонии НЕ делается здесь
+    Это делает quick_errors ConversationHandler
+    """
     user_id = update.effective_user.id
     username = update.effective_user.first_name or "Пользователь"
     role = get_user_role(context)
     
-    # Получаем выбор телефонии
+    # Получаем выбор телефонии (должен быть установлен в quick_errors.py)
     tel, tel_code = get_tel_choice(context)
     
     # Проверка timeout
@@ -207,7 +144,12 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главный обработчик всех текстовых сообщений"""
+    """
+    Главный обработчик текстовых сообщений
+    
+    ✅ КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: НЕ обрабатывает выбор телефоний
+    Все телефонии обрабатываются в quick_errors ConversationHandler (group=0)
+    """
     user_id = update.effective_user.id
     
     # Проверка доступа
@@ -224,15 +166,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_support_message(update, context):
         return
     
-    # ✅ КРИТИЧЕСКИ ВАЖНО: Проверка выбора телефонии с динамической проверкой БД
-    telephony_handled = await handle_telephony_choice(update, context)
-    
-    if telephony_handled:
-        # Обработано как обычная телефония
-        return
-    
-    # Если не обработано здесь - может быть быстрая ошибка (обработает quick_errors.py)
-    # или это кнопка меню
+    # ✅ УДАЛЕНО: handle_telephony_choice()
+    # Теперь это делает quick_errors ConversationHandler
     
     # Список кнопок меню
     menu_texts = {
