@@ -1,11 +1,11 @@
 """
-handlers/messages.py - ФИНАЛЬНАЯ ВЕРСИЯ
-БЕЗ обработки выбора телефоний (это делает quick_errors.py)
+handlers/messages.py - ПОЛНОЕ ИСПРАВЛЕНИЕ
+Правильная логика обработки сообщений
 
 КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
-✅ УДАЛЕНА функция handle_telephony_choice()
-✅ message_handler НЕ проверяет названия телефоний
-✅ Всё, что связано с телефониями, обрабатывает quick_errors ConversationHandler
+✅ НЕ показывает предупреждение о телефонии если пользователь просто пишет текст
+✅ Предупреждение только ПОСЛЕ нажатия кнопки "Ошибки телефонии"
+✅ Используем флаг "awaiting_error" для определения намерения пользователя
 """
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
@@ -69,14 +69,13 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     Обрабатывает сообщение как описание ошибки телефонии
     
-    ✅ ПРИМЕЧАНИЕ: Выбор телефонии НЕ делается здесь
-    Это делает quick_errors ConversationHandler
+    ✅ КРИТИЧНО: Работает ТОЛЬКО если пользователь уже выбрал телефонию
     """
     user_id = update.effective_user.id
     username = update.effective_user.first_name or "Пользователь"
     role = get_user_role(context)
     
-    # Получаем выбор телефонии (должен быть установлен в quick_errors.py)
+    # Получаем выбор телефонии
     tel, tel_code = get_tel_choice(context)
     
     # Проверка timeout
@@ -86,30 +85,27 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
         tel_code = None
         logger.info(f"⏱ Истёк timeout выбора телефонии для user_id={user_id}")
     
-    # Если телефония не выбрана
+    # ✅ КРИТИЧНО: Если телефония НЕ выбрана - НЕ обрабатываем как ошибку
     if not tel or not tel_code:
-        current_menu = get_menu_by_role(role)
-        await update.message.reply_text(
-            "⚠️ Сначала выберите телефонию через кнопку 'Ошибки телефонии'",
-            reply_markup=current_menu
-        )
-        return
+        # Просто игнорируем - пусть message_handler обработает как обычный текст
+        return False
     
-    # Получаем ID группы
+    # Телефония выбрана - обрабатываем как ошибку
+    
     group_id = telephony_service.get_group_id(tel)
     if not group_id:
         logger.error(f"❌ Не найдена группа для телефонии: {tel}")
         await update.message.reply_text("⚠️ Ошибка: не назначена группа для этой телефонии.")
-        return
+        return True
     
-    # Получение и валидация текста
+    # Валидация текста
     error_text = update.message.text or update.message.caption or ""
     has_media = bool(update.message.photo or update.message.document)
     
     is_valid, error_msg = telephony_service.validate_error_text(error_text, has_media)
     if not is_valid:
         await update.message.reply_text(error_msg)
-        return
+        return True
     
     # Отправка в группу
     success = await telephony_service.send_error_to_group(
@@ -127,13 +123,12 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
             "⚠️ Не удалось отправить ошибку в саппорт.\n"
             "Попробуйте позже или обратитесь к администратору."
         )
-        return
+        return True
     
-    # Очистка выбора и возврат в меню
+    # Очистка и возврат в меню
     clear_tel_choice(context)
     current_menu = get_menu_by_role(role)
     
-    # Получаем правильное сообщение для телефонии
     success_msg = telephony_service.get_success_message(tel_code, tel)
     
     await update.message.reply_text(
@@ -141,14 +136,15 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML",
         reply_markup=current_menu
     )
+    
+    return True
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Главный обработчик текстовых сообщений
     
-    ✅ КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: НЕ обрабатывает выбор телефоний
-    Все телефонии обрабатываются в quick_errors ConversationHandler (group=0)
+    ✅ КРИТИЧНО: Игнорирует сообщения обработанные ConversationHandler
     """
     user_id = update.effective_user.id
     
@@ -160,14 +156,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
     
+    # ✅ КРИТИЧНО: Проверяем что это не ID (число) - такие обрабатывает ConversationHandler
+    # Если это просто число и больше ничего - скорее всего это ID от ConversationHandler
+    if text.strip().isdigit() and len(text.strip()) > 5:
+        logger.debug(f"🔇 Игнорируем ID {text} (обработан ConversationHandler)")
+        return
+    
     logger.debug(f"📨 Сообщение от user_id={user_id}: '{text[:50]}...'")
     
     # Проверка режима поддержки
     if await handle_support_message(update, context):
         return
-    
-    # ✅ УДАЛЕНО: handle_telephony_choice()
-    # Теперь это делает quick_errors ConversationHandler
     
     # Список кнопок меню
     menu_texts = {
@@ -181,6 +180,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если это кнопка меню
     if text in menu_texts:
         await handle_menu_button(update, context)
-    else:
-        # Иначе - это описание ошибки
-        await handle_error_message(update, context)
+        return
+    
+    # Пытаемся обработать как ошибку
+    handled = await handle_error_message(update, context)
+    
+    if handled:
+        return
+    
+    # Если не обработано - показываем "Неизвестная команда"
+    role = get_user_role(context)
+    current_menu = get_menu_by_role(role)
+    
+    await update.message.reply_text(
+        MESSAGES["unknown_command"],
+        reply_markup=current_menu
+    )

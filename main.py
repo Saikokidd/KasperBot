@@ -1,11 +1,12 @@
 """
-main.py - ПОЛНАЯ ВЕРСИЯ
-С поддержкой Inline выбора телефонии
+main.py - КРИТИЧЕСКИЙ ФИКС
+ConversationHandlers с per_message=False - НЕ пропускают сообщения дальше
 
 ИЗМЕНЕНИЯ:
-✅ Добавлен import handle_telephony_selection_callback
-✅ Зарегистрирован callback для выбора телефонии (group=0)
-✅ quick_errors опционален (работает если включён)
+✅ per_message=False - сообщения НЕ идут в message_handler
+✅ per_chat=True - разные диалоги для разных чатов
+✅ per_user=True - разные диалоги для разных пользователей
+✅ allow_reentry=True - можно начать заново
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -26,7 +27,6 @@ from handlers.callbacks import (
 from handlers.messages import message_handler
 from handlers.errors import error_handler
 
-# ✅ НОВОЕ: Импорт обработчика Inline выбора телефонии
 from handlers.menu import handle_telephony_selection_callback
 
 from handlers.management import (
@@ -39,7 +39,6 @@ from handlers.management import (
     remove_telephony_start, remove_telephony_process,
     broadcast_start, broadcast_process, broadcast_confirm,
     cancel_conversation,
-    quick_errors_menu, toggle_quick_errors_callback, show_quick_errors_info,
     WAITING_MANAGER_ID, WAITING_MANAGER_ID_REMOVE,
     WAITING_TEL_NAME, WAITING_TEL_CODE, WAITING_TEL_TYPE, WAITING_TEL_GROUP,
     WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
@@ -53,8 +52,6 @@ from handlers.analytics import (
     show_dashboard_start, show_dashboard_page
 )
 
-from handlers.quick_errors import get_quick_errors_conv, get_quick_errors_telephony_names
-
 
 async def fallback_callback(update, context):
     """Fallback для неизвестных callback"""
@@ -62,10 +59,8 @@ async def fallback_callback(update, context):
     
     known_patterns = [
         'mgmt_', 'role_', 'tel_', 'fix_', 'wait_', 'wrong_', 'sim_',
-        'qerr_', 'cancel_quick_errors', 'change_sip',
-        'stats_', 'dash_', 'toggle_qe_', 'qe_info',
-        'broadcast_confirm', 'tel_type_', 'noop',
-        'select_tel_'  # ✅ НОВОЕ
+        'stats_', 'dash_', 'broadcast_confirm', 'tel_type_', 'noop',
+        'select_tel_'
     ]
     
     is_known = any(query.data.startswith(p) for p in known_patterns)
@@ -79,11 +74,9 @@ def register_handlers(app: Application):
     """
     Регистрация всех обработчиков
     
-    ПОРЯДОК:
-    1. group=-1: Команды
-    2. group=0: Callbacks + quick_errors ConversationHandler (опционально)
-    3. group=1: Остальные ConversationHandlers
-    4. group=2: message_handler (ПОСЛЕДНИМ!)
+    КРИТИЧНО:
+    - ConversationHandlers с per_message=False
+    - НЕ пропускают сообщения в message_handler
     """
     logger.info("🔧 Начало регистрации обработчиков...")
     
@@ -92,20 +85,16 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("health", health_command), group=-1)
     logger.info("✅ Команды (group=-1)")
     
-    # ===== GROUP 0: CALLBACKS + QUICK_ERRORS =====
+    # ===== GROUP 0: CALLBACKS =====
     
-    # ✅ НОВОЕ: Выбор телефонии через Inline кнопки
     app.add_handler(
         CallbackQueryHandler(handle_telephony_selection_callback, pattern="^select_tel_"),
         group=0
     )
-    logger.info("✅ Inline выбор телефонии зарегистрирован (group=0)")
+    logger.info("✅ Inline выбор телефонии (group=0)")
     
     # Управление
     app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"), group=0)
-    app.add_handler(CallbackQueryHandler(quick_errors_menu, pattern="^mgmt_quick_errors$"), group=0)
-    app.add_handler(CallbackQueryHandler(toggle_quick_errors_callback, pattern="^toggle_qe_"), group=0)
-    app.add_handler(CallbackQueryHandler(show_quick_errors_info, pattern="^qe_info$"), group=0)
     app.add_handler(CallbackQueryHandler(managers_menu, pattern="^mgmt_managers$"), group=0)
     app.add_handler(CallbackQueryHandler(list_managers, pattern="^mgmt_list_managers$"), group=0)
     app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"), group=0)
@@ -135,22 +124,10 @@ def register_handlers(app: Application):
     
     logger.info("✅ Callbacks (group=0)")
     
-    # ✅ ОПЦИОНАЛЬНО: quick_errors В GROUP 0 (если включены быстрые ошибки)
-    quick_errors_conv = get_quick_errors_conv()
+    # ===== GROUP 1: CONVERSATIONHANDLERS =====
     
-    if quick_errors_conv:
-        app.add_handler(quick_errors_conv, group=0)
-        logger.info("✅ quick_errors ConversationHandler (group=0)")
-        
-        telephony_names = get_quick_errors_telephony_names()
-        if telephony_names:
-            logger.info(f"   📞 Быстрые ошибки: {', '.join(telephony_names)}")
-    else:
-        logger.info("ℹ️ quick_errors отключены (нет телефоний с quick_errors_enabled=1)")
+    # ✅ КРИТИЧНО: per_message=False - НЕ пропускает сообщения дальше
     
-    # ===== GROUP 1: ОСТАЛЬНЫЕ CONVERSATIONHANDLERS =====
-    
-    # ConversationHandler управления
     add_manager_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_manager_start, pattern="^mgmt_add_manager$")],
         states={
@@ -160,6 +137,10 @@ def register_handlers(app: Application):
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,  # ✅ КРИТИЧНО
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
         name='add_manager'
     )
     app.add_handler(add_manager_conv, group=1)
@@ -172,6 +153,10 @@ def register_handlers(app: Application):
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,  # ✅ КРИТИЧНО
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
         name='remove_manager'
     )
     app.add_handler(remove_manager_conv, group=1)
@@ -185,6 +170,10 @@ def register_handlers(app: Application):
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_telephony_group)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,  # ✅ КРИТИЧНО
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
         name='add_telephony'
     )
     app.add_handler(add_tel_conv, group=1)
@@ -195,6 +184,10 @@ def register_handlers(app: Application):
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_telephony_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,  # ✅ КРИТИЧНО
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
         name='remove_telephony'
     )
     app.add_handler(remove_tel_conv, group=1)
@@ -205,11 +198,16 @@ def register_handlers(app: Application):
             WAITING_BROADCAST_MESSAGE: [MessageHandler((filters.ALL & ~filters.COMMAND), broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,  # ✅ КРИТИЧНО
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
         name='broadcast'
     )
     app.add_handler(broadcast_conv, group=1)
     
     logger.info("✅ Management ConversationHandlers (group=1)")
+    logger.info("   ℹ️ per_message=False - сообщения НЕ идут в message_handler")
     
     # ===== GROUP 2: MESSAGE HANDLER (ПОСЛЕДНИМ!) =====
     
@@ -225,7 +223,6 @@ def register_handlers(app: Application):
     
     logger.info("✅ ВСЕ обработчики зарегистрированы!")
     
-    # Логируем количество
     for group_num in [-1, 0, 1, 2]:
         handlers_in_group = app.handlers.get(group_num, [])
         logger.info(f"   Group {group_num}: {len(handlers_in_group)} handler(s)")
@@ -238,19 +235,15 @@ def main():
         logger.info(f"📋 Менеджеров: {len(settings.MANAGERS)}")
         logger.info(f"👑 Admin ID: {settings.ADMIN_ID}")
         
-        # Инициализация БД
         from database.models import db
         logger.info("✅ БД инициализирована")
         
-        # Создание приложения
         app = Application.builder().token(settings.BOT_TOKEN).build()
         
-        # Регистрация обработчиков
         register_handlers(app)
         
         logger.info("✅ Бот готов к работе!")
         
-        # Запуск планировщика
         try:
             from services.scheduler_service import scheduler_service
             
@@ -262,7 +255,6 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ Планировщик не запущен: {e}")
         
-        # Регистрация shutdown callbacks
         def stop_scheduler():
             try:
                 from services.scheduler_service import scheduler_service
@@ -273,7 +265,6 @@ def main():
         shutdown_handler.register_callback(stop_scheduler)
         shutdown_handler.setup_handlers()
         
-        # Запуск polling
         logger.info("🔄 Запуск polling...")
         app.run_polling(
             allowed_updates=["message", "callback_query"],

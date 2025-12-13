@@ -1,11 +1,11 @@
 """
-handlers/menu.py - ВРЕМЕННОЕ РЕШЕНИЕ
-Используем Inline клавиатуру вместо Reply
+handlers/menu.py - ПОЛНОЕ ИСПРАВЛЕНИЕ
+Правильная работа с Inline кнопками телефоний
 
-ИЗМЕНЕНИЯ:
-✅ handle_telephony_errors_button показывает Inline кнопки
-✅ Добавлен обработчик callback для выбора телефонии
-✅ Работает ВСЕГДА (не зависит от ConversationHandler)
+КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
+✅ НЕ используем Reply клавиатуру для телефоний (только Inline)
+✅ Всегда очищаем состояние при возврате в меню
+✅ Не показываем лишних предупреждений
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 from config.constants import USEFUL_LINKS, MESSAGES
 from keyboards.reply import get_menu_by_role
 from keyboards.inline import get_management_menu
-from utils.state import get_user_role, set_support_mode, clear_tel_choice, set_tel_choice
+from utils.state import get_user_role, set_support_mode, clear_tel_choice, set_tel_choice, clear_all_states
 from utils.logger import logger
 
 
@@ -25,13 +25,12 @@ async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_telephony_errors_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    ✅ ВРЕМЕННОЕ РЕШЕНИЕ: Inline клавиатура вместо Reply
+    Обработчик кнопки "Ошибки телефонии"
     
-    Args:
-        update: Update объект
-        context: Контекст пользователя
+    ✅ КРИТИЧНО: Очищаем старое состояние перед показом кнопок
     """
-    clear_tel_choice(context)
+    # ✅ КРИТИЧНО: Очищаем состояние
+    clear_all_states(context)
     
     # Получаем все телефонии из БД
     from database.models import db
@@ -64,17 +63,14 @@ async def handle_telephony_errors_button(update: Update, context: ContextTypes.D
 
 async def handle_telephony_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    ✅ НОВОЕ: Обработчик Inline кнопок выбора телефонии
+    Обработчик Inline кнопок выбора телефонии
     
-    Args:
-        update: Update объект
-        context: Контекст пользователя
+    ✅ КРИТИЧНО: Устанавливает флаг что пользователь выбрал телефонию
     """
     query = update.callback_query
     await query.answer()
     
-    # Извлекаем код телефонии из callback_data
-    # Формат: select_tel_auro
+    # Извлекаем код телефонии
     tel_code = query.data.split("_")[2]
     
     logger.info(f"📞 Выбрана телефония через Inline: {tel_code}")
@@ -90,7 +86,7 @@ async def handle_telephony_selection_callback(update: Update, context: ContextTy
         )
         return
     
-    # Сохраняем выбор
+    # ✅ КРИТИЧНО: Сохраняем выбор
     set_tel_choice(context, tel['name'], tel['code'])
     
     logger.info(f"✅ User {query.from_user.id} выбрал телефонию: {tel['name']} ({tel['code']})")
@@ -114,7 +110,7 @@ async def handle_useful_links_button(update: Update, context: ContextTypes.DEFAU
 
 
 async def handle_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки "Статистика трубок" (только для админа в личке)"""
+    """Обработчик кнопки "Статистика трубок"""
     try:
         from services.stats_service import stats_service
         
@@ -159,7 +155,7 @@ async def handle_bot_management_button(update: Update, context: ContextTypes.DEF
 
 
 async def handle_errors_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки 'Статистика ошибок' - сразу открывает дашборд"""
+    """Обработчик кнопки 'Статистика ошибок'"""
     from services.analytics_service import analytics_service
     from handlers.analytics import get_dashboard_navigation
     
@@ -177,15 +173,17 @@ async def handle_back_to_menu_button(update: Update, context: ContextTypes.DEFAU
     """
     Обработчик кнопки "◀️ Меню" - возврат в главное меню
     
-    Args:
-        update: Update объект
-        context: Контекст пользователя
+    ✅ КРИТИЧНО: Очищаем ВСЁ состояние при возврате
     """
+    # ✅ КРИТИЧНО: Полная очистка состояния
+    clear_all_states(context)
+    
     role = get_user_role(context)
     current_menu = get_menu_by_role(role)
     
+    # ✅ ИСПРАВЛЕНО: Обновляем Reply клавиатуру
     await update.message.reply_text(
-        "Выберите действие из меню:",
+        "📋 Главное меню\n\nВыберите действие:",
         reply_markup=current_menu
     )
 
@@ -193,10 +191,6 @@ async def handle_back_to_menu_button(update: Update, context: ContextTypes.DEFAU
 async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Главный обработчик кнопок меню
-    
-    Args:
-        update: Update объект
-        context: Контекст пользователя
     """
     text = update.message.text
     role = get_user_role(context)
