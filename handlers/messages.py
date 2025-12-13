@@ -156,10 +156,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
     
-    # ✅ КРИТИЧНО: Проверяем что это не ID (число) - такие обрабатывает ConversationHandler
-    # Если это просто число и больше ничего - скорее всего это ID от ConversationHandler
-    if text.strip().isdigit() and len(text.strip()) > 5:
-        logger.debug(f"🔇 Игнорируем ID {text} (обработан ConversationHandler)")
+    # ✅ КРИТИЧНО: Проверяем что ConversationHandler НЕ активен
+    # Если есть временные данные от management - игнорируем
+    management_keys = [
+        'tel_name', 'tel_code', 'tel_type',
+        'broadcast_message_id', 'broadcast_chat_id'
+    ]
+    
+    if any(key in context.user_data for key in management_keys):
+        logger.debug(f"🔇 Игнорируем сообщение - ConversationHandler активен")
+        return
+    
+    # ✅ КРИТИЧНО: Игнорируем ТОЛЬКО чистые числа (ID) длиннее 5 символов
+    text_clean = text.strip()
+    if text_clean.isdigit() and len(text_clean) > 5:
+        logger.debug(f"🔇 Игнорируем ID {text_clean} (обработан ConversationHandler)")
         return
     
     logger.debug(f"📨 Сообщение от user_id={user_id}: '{text[:50]}...'")
