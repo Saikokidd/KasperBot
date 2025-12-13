@@ -38,10 +38,14 @@ from handlers.management import (
     add_telephony_type, add_telephony_group,
     remove_telephony_start, remove_telephony_process,
     broadcast_start, broadcast_process, broadcast_confirm,
+    quick_errors_menu, quick_errors_list,
+    quick_errors_add_start, quick_errors_add_process,
+    quick_errors_remove_start, quick_errors_remove_process,
     cancel_conversation,
     WAITING_MANAGER_ID, WAITING_MANAGER_ID_REMOVE,
     WAITING_TEL_NAME, WAITING_TEL_CODE, WAITING_TEL_TYPE, WAITING_TEL_GROUP,
-    WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE
+    WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE,
+    WAITING_QE_CODE_ADD, WAITING_QE_CODE_REMOVE
 )
 
 from handlers.analytics import (
@@ -100,7 +104,11 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(telephonies_menu, pattern="^mgmt_telephonies$"), group=0)
     app.add_handler(CallbackQueryHandler(list_telephonies, pattern="^mgmt_list_tel$"), group=0)
     app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="^broadcast_confirm$"), group=0)
-    
+
+    # Быстрые ошибки
+    app.add_handler(CallbackQueryHandler(quick_errors_menu, pattern="^mgmt_quick_errors$"), group=0)
+    app.add_handler(CallbackQueryHandler(quick_errors_list, pattern="^qe_list$"), group=0)
+
     # Статистика
     app.add_handler(CallbackQueryHandler(show_errors_stats_menu, pattern="^stats_menu$"), group=0)
     app.add_handler(CallbackQueryHandler(show_dashboard_start, pattern="^dash_start_"), group=0)
@@ -208,6 +216,40 @@ def register_handlers(app: Application):
     
     logger.info("✅ Management ConversationHandlers (group=1)")
     logger.info("   ℹ️ per_message=False - сообщения НЕ идут в message_handler")
+
+    # ===== БЫСТРЫЕ ОШИБКИ =====
+
+    qe_add_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(quick_errors_add_start, pattern="^qe_add$")],
+        states={
+            WAITING_QE_CODE_ADD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, quick_errors_add_process)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        name='qe_add'
+    )
+    app.add_handler(qe_add_conv, group=1)
+
+    qe_remove_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(quick_errors_remove_start, pattern="^qe_remove$")],
+        states={
+            WAITING_QE_CODE_REMOVE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, quick_errors_remove_process)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+        per_message=False,
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        name='qe_remove'
+    )
+    app.add_handler(qe_remove_conv, group=1)
     
     # ===== GROUP 2: MESSAGE HANDLER (ПОСЛЕДНИМ!) =====
     

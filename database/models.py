@@ -115,6 +115,16 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES managers(user_id)
             )
         """)
+
+        # Таблица телефоний с быстрыми ошибками
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quick_error_telephonies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telephony_code TEXT UNIQUE NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (telephony_code) REFERENCES telephonies(code)
+            )
+        """)
         
         conn.commit()
         conn.close()
@@ -690,5 +700,137 @@ class Database:
             logger.error(f"❌ Ошибка получения белых телефоний: {e}")
             return []
 
+
+    # ===== БЫСТРЫЕ ОШИБКИ =====
+
+def add_quick_error_telephony(self, code: str) -> bool:
+    """
+    Добавить телефонию в быстрые ошибки
+    
+    Args:
+        code: Код телефонии (bmw, zvon, и т.д.)
+        
+    Returns:
+        True если успешно
+    """
+    try:
+        # Проверяем что телефония существует и белая
+        tel = self.get_telephony_by_code(code)
+        
+        if not tel:
+            logger.warning(f"⚠️ Телефония {code} не найдена")
+            return False
+        
+        if tel['type'] != 'white':
+            logger.warning(f"⚠️ Телефония {code} не белая (тип: {tel['type']})")
+            return False
+        
+        # Добавляем в быстрые
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO quick_error_telephonies (telephony_code) VALUES (?)",
+                (code,)
+            )
+            conn.commit()
+        
+        logger.info(f"✅ Телефония {code} добавлена в быстрые ошибки")
+        return True
+        
+    except sqlite3.IntegrityError:
+        logger.warning(f"⚠️ Телефония {code} уже в быстрых ошибках")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Ошибка добавления в быстрые ошибки: {e}")
+        return False
+
+def remove_quick_error_telephony(self, code: str) -> bool:
+    """
+    Удалить телефонию из быстрых ошибок
+    
+    Args:
+        code: Код телефонии
+        
+    Returns:
+        True если успешно
+    """
+    try:
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM quick_error_telephonies WHERE telephony_code = ?",
+                (code,)
+            )
+            deleted = cursor.rowcount > 0
+            conn.commit()
+        
+        if deleted:
+            logger.info(f"✅ Телефония {code} удалена из быстрых ошибок")
+        else:
+            logger.warning(f"⚠️ Телефония {code} не была в быстрых ошибках")
+        
+        return deleted
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления из быстрых ошибок: {e}")
+        return False
+
+def is_quick_error_telephony(self, code: str) -> bool:
+    """
+    Проверить, является ли телефония быстрой
+    
+    Args:
+        code: Код телефонии
+        
+    Returns:
+        True если телефония в быстрых ошибках
+    """
+    try:
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM quick_error_telephonies WHERE telephony_code = ?",
+                (code,)
+            )
+            exists = cursor.fetchone() is not None
+        
+        return exists
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки быстрых ошибок: {e}")
+        return False
+
+def get_quick_error_telephonies(self) -> List[Dict]:
+    """
+    Получить список всех телефоний с быстрыми ошибками
+    
+    Returns:
+        Список словарей с информацией о телефониях
+    """
+    try:
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT t.name, t.code, t.group_id, qe.added_at
+                FROM quick_error_telephonies qe
+                JOIN telephonies t ON qe.telephony_code = t.code
+                WHERE t.enabled = 1
+                ORDER BY t.name
+            """)
+            rows = cursor.fetchall()
+        
+        return [
+            {
+                "name": row[0],
+                "code": row[1],
+                "group_id": row[2],
+                "added_at": row[3]
+            }
+            for row in rows
+        ]
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения списка быстрых ошибок: {e}")
+        return []
 # Глобальный экземпляр БД
 db = Database()

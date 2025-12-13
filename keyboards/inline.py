@@ -85,7 +85,7 @@ def get_support_keyboard(user_id: int, tel_code: str) -> InlineKeyboardMarkup:
 # ===== НОВЫЕ КЛАВИАТУРЫ ДЛЯ УПРАВЛЕНИЯ =====
 
 def get_management_menu() -> InlineKeyboardMarkup:
-    """Главное меню управления ботом - ОБНОВЛЁННАЯ ВЕРСИЯ"""
+    """Главное меню управления ботом"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Менеджеры", callback_data="mgmt_managers")],
         [InlineKeyboardButton("📞 Телефонии", callback_data="mgmt_telephonies")],

@@ -20,7 +20,8 @@ from utils.logger import logger
 # Состояния
 (WAITING_MANAGER_ID, WAITING_MANAGER_ID_REMOVE,
  WAITING_TEL_NAME, WAITING_TEL_CODE, WAITING_TEL_TYPE, WAITING_TEL_GROUP,
- WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE) = range(8)
+ WAITING_TEL_CODE_REMOVE, WAITING_BROADCAST_MESSAGE,
+ WAITING_QE_CODE_ADD, WAITING_QE_CODE_REMOVE) = range(10)
 
 
 async def show_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,6 +459,181 @@ async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('broadcast_chat_id', None)
     clear_all_states(context)
 
+
+# ===== БЫСТРЫЕ ОШИБКИ =====
+
+async def quick_errors_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню управления быстрыми ошибками"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Список", callback_data="qe_list")],
+        [InlineKeyboardButton("➕ Добавить телефонию", callback_data="qe_add")],
+        [InlineKeyboardButton("➖ Удалить телефонию", callback_data="qe_remove")],
+        [InlineKeyboardButton("« Назад", callback_data="mgmt_menu")]
+    ])
+    
+    await query.message.edit_text(
+        "⚡️ <b>Быстрые ошибки</b>\n\n"
+        "Телефонии с быстрыми ошибками позволяют менеджерам:\n"
+        "• Указать SIP один раз в день\n"
+        "• Выбирать ошибку из готовых кнопок\n"
+        "• Быстро отправлять типовые ошибки\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+async def quick_errors_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список телефоний с быстрыми ошибками"""
+    query = update.callback_query
+    await query.answer()
+    
+    quick_tels = db.get_quick_error_telephonies()
+    
+    if not quick_tels:
+        text = (
+            "📋 <b>Список быстрых ошибок</b>\n\n"
+            "📭 Список пуст.\n\n"
+            "Добавьте телефонию через кнопку '➕ Добавить'."
+        )
+    else:
+        text = f"📋 <b>Список быстрых ошибок ({len(quick_tels)}):</b>\n\n"
+        
+        for i, tel in enumerate(quick_tels, 1):
+            text += (
+                f"{i}. ⚡️ <b>{tel['name']}</b>\n"
+                f"   Код: <code>{tel['code']}</code>\n"
+                f"   Группа: <code>{tel['group_id']}</code>\n"
+                f"   Добавлено: {tel['added_at'][:10]}\n\n"
+            )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("« Назад", callback_data="mgmt_quick_errors")]
+    ])
+    
+    await query.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def quick_errors_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало добавления телефонии в быстрые ошибки"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.edit_text(
+        "➕ <b>Добавить в быстрые ошибки</b>\n\n"
+        "Отправьте <b>код</b> телефонии (например: <code>bmw</code>)\n\n"
+        "⚠️ Требования:\n"
+        "• Телефония должна существовать\n"
+        "• Телефония должна быть белой (с кнопками)\n\n"
+        "Отмена: /cancel",
+        parse_mode="HTML"
+    )
+    
+    return WAITING_QE_CODE_ADD
+
+
+async def quick_errors_add_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка добавления телефонии"""
+    code = update.message.text.strip().lower()
+    
+    # Проверяем формат
+    if not code.isalnum():
+        await update.message.reply_text(
+            "❌ Код должен содержать только латинские буквы и цифры!\n"
+            "Попробуйте снова или /cancel для отмены."
+        )
+        return WAITING_QE_CODE_ADD
+    
+    # Добавляем
+    success = db.add_quick_error_telephony(code)
+    
+    if success:
+        tel = db.get_telephony_by_code(code)
+        text = (
+            f"✅ <b>Телефония добавлена в быстрые ошибки!</b>\n\n"
+            f"📞 Название: <b>{tel['name']}</b>\n"
+            f"🔑 Код: <code>{code}</code>\n\n"
+            f"Теперь менеджеры смогут использовать быстрые ошибки для этой телефонии."
+        )
+    else:
+        tel = db.get_telephony_by_code(code)
+        
+        if not tel:
+            text = (
+                f"❌ <b>Телефония не найдена!</b>\n\n"
+                f"Код <code>{code}</code> не существует в базе.\n\n"
+                f"Сначала добавьте телефонию через:\n"
+                f"Управление ботом → Телефонии → Добавить"
+            )
+        elif tel['type'] != 'white':
+            text = (
+                f"❌ <b>Неверный тип телефонии!</b>\n\n"
+                f"Телефония <b>{tel['name']}</b> имеет тип: <b>{tel['type']}</b>\n\n"
+                f"Быстрые ошибки работают только с <b>белыми</b> телефониями."
+            )
+        else:
+            text = (
+                f"⚠️ <b>Телефония уже в быстрых ошибках!</b>\n\n"
+                f"📞 {tel['name']} (<code>{code}</code>)"
+            )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("« К быстрым ошибкам", callback_data="mgmt_quick_errors")]
+    ])
+    
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+    
+    clear_all_states(context)
+    return ConversationHandler.END
+
+
+async def quick_errors_remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало удаления телефонии из быстрых ошибок"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.edit_text(
+        "➖ <b>Удалить из быстрых ошибок</b>\n\n"
+        "Отправьте <b>код</b> телефонии (например: <code>bmw</code>)\n\n"
+        "Отмена: /cancel",
+        parse_mode="HTML"
+    )
+    
+    return WAITING_QE_CODE_REMOVE
+
+
+async def quick_errors_remove_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка удаления телефонии"""
+    code = update.message.text.strip().lower()
+    
+    success = db.remove_quick_error_telephony(code)
+    
+    if success:
+        tel = db.get_telephony_by_code(code)
+        tel_name = tel['name'] if tel else code.upper()
+        
+        text = (
+            f"✅ <b>Телефония удалена из быстрых ошибок!</b>\n\n"
+            f"📞 {tel_name} (<code>{code}</code>)\n\n"
+            f"Теперь менеджеры будут использовать обычный ввод ошибки."
+        )
+    else:
+        text = (
+            f"⚠️ <b>Телефония не была в быстрых ошибках</b>\n\n"
+            f"Код: <code>{code}</code>"
+        )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("« К быстрым ошибкам", callback_data="mgmt_quick_errors")]
+    ])
+    
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+    
+    clear_all_states(context)
+    return ConversationHandler.END
 
 # ===== ОТМЕНА =====
 
