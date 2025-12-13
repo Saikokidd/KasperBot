@@ -1,14 +1,14 @@
 """
-ИСПРАВЛЕНО: services/managers_stats_service.py
-Улучшена обработка ошибок Google Apps Script
+ОБНОВЛЕНО: services/managers_stats_service.py
+Добавлена поддержка параметра date для получения данных за конкретный день
 
 ИЗМЕНЕНИЯ:
-✅ Проверка Content-Type перед парсингом JSON
-✅ Вывод HTML в логи для диагностики
-✅ Fallback на пустой список при ошибке
+✅ _fetch_managers_data теперь принимает параметр target_date
+✅ Передаёт дату в Apps Script в формате DD.MM
+✅ Улучшена обработка ошибок
 """
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List
+from typing import Dict, List, Optional
 import aiohttp
 from config.settings import settings
 from utils.logger import logger
@@ -28,11 +28,17 @@ class ManagersStatsService:
             logger.error(f"❌ Ошибка получения статистики менеджеров: {e}", exc_info=True)
             return "⚠️ Ошибка получения статистики менеджеров"
     
-    async def _fetch_managers_data(self) -> List[Dict]:
+    async def _fetch_managers_data(self, target_date: Optional[datetime] = None) -> List[Dict]:
         """
         Получает данные менеджеров из Google Sheets через Apps Script
         
-        ✅ ИСПРАВЛЕНО: Улучшена обработка ошибок
+        ✅ НОВОЕ: Поддержка параметра target_date
+        
+        Args:
+            target_date: Дата для получения данных (опционально, по умолчанию - сегодня)
+            
+        Returns:
+            Список словарей с данными менеджеров
         """
         url = settings.GOOGLE_APPS_SCRIPT_URL
         
@@ -40,11 +46,20 @@ class ManagersStatsService:
             logger.error("❌ GOOGLE_APPS_SCRIPT_URL не установлен в .env")
             raise ValueError("GOOGLE_APPS_SCRIPT_URL не настроен")
         
-        # Добавляем параметр action=managers
+        # ✅ НОВОЕ: Формируем параметры запроса
+        params = {'action': 'managers'}
+        
+        if target_date:
+            # Форматируем дату в DD.MM
+            date_str = target_date.strftime('%d.%m')
+            params['date'] = date_str
+            logger.debug(f"📅 Запрос данных за дату: {date_str}")
+        
+        # Добавляем параметры к URL
         if '?' in url:
-            url += '&action=managers'
+            url += '&' + '&'.join([f"{k}={v}" for k, v in params.items()])
         else:
-            url += '?action=managers'
+            url += '?' + '&'.join([f"{k}={v}" for k, v in params.items()])
         
         logger.debug(f"🔗 Запрос к Apps Script: {url}")
         
@@ -55,40 +70,29 @@ class ManagersStatsService:
                         logger.error(f"❌ HTTP ошибка: {response.status}")
                         raise Exception(f"HTTP {response.status}")
                     
-                    # ✅ НОВОЕ: Проверяем Content-Type
                     content_type = response.headers.get('Content-Type', '')
                     logger.debug(f"📄 Content-Type: {content_type}")
                     
                     if 'text/html' in content_type:
-                        # Получаем HTML для диагностики
                         html_text = await response.text()
-                        
-                        # Логируем первые 500 символов
                         logger.error(f"❌ Apps Script вернул HTML вместо JSON!")
-                        logger.error(f"📄 Первые 500 символов ответа:")
+                        logger.error(f"📄 Первые 500 символов:")
                         logger.error(html_text[:500])
                         
-                        # Проверяем на страницу входа Google
                         if 'accounts.google.com' in html_text or 'Sign in' in html_text:
                             logger.error("🔒 Похоже на страницу входа Google!")
-                            logger.error("💡 Проверьте:")
-                            logger.error("   1. Apps Script опубликован как Web App")
-                            logger.error("   2. Доступ: 'Anyone' или 'Anyone with the link'")
-                            logger.error("   3. URL правильный (последняя версия деплоя)")
+                            logger.error("💡 Проверьте публикацию Apps Script")
                         
-                        raise ValueError("Apps Script вернул HTML вместо JSON - проверьте публикацию скрипта")
+                        raise ValueError("Apps Script вернул HTML вместо JSON")
                     
-                    # Пытаемся распарсить JSON
                     data = await response.json()
                     
-                    # Проверка на ошибку от скрипта
                     if isinstance(data, dict) and 'error' in data:
                         logger.error(f"❌ Ошибка от скрипта: {data['error']}")
                         raise Exception(data['error'])
                     
                     if not isinstance(data, list):
                         logger.error(f"❌ Неожиданный формат данных: {type(data)}")
-                        logger.error(f"📄 Данные: {data}")
                         raise ValueError("Apps Script вернул не список")
                     
                     logger.info(f"✅ Получено {len(data)} записей менеджеров")
@@ -98,7 +102,6 @@ class ManagersStatsService:
             logger.error(f"❌ Ошибка HTTP запроса: {e}", exc_info=True)
             raise
         except ValueError as e:
-            # HTML вместо JSON - повторно выбрасываем
             raise
         except Exception as e:
             logger.error(f"❌ Ошибка получения данных: {e}", exc_info=True)
