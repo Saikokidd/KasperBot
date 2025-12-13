@@ -232,10 +232,18 @@ def main():
     """Главная функция запуска бота"""
     try:
         logger.info("🚀 Запуск бота...")
-        logger.info(f"📋 Менеджеров: {len(settings.MANAGERS)}")
-        logger.info(f"👑 Admin ID: {settings.ADMIN_ID}")
+        
+        # ✅ НОВОЕ: Автоматическая миграция менеджеров из .env в БД
+        from services.user_service import user_service
+        user_service.migrate_env_managers_to_db()
+        
+        # ✅ ИЗМЕНЕНО: Теперь показываем правильную статистику
+        logger.info(f"👑 Админов: {len(settings.ADMINS)}")
+        logger.info(f"🎛 Пульт: {len(settings.PULT)}")
         
         from database.models import db
+        managers = db.get_all_managers()
+        logger.info(f"📋 Менеджеров в БД: {len(managers)}")
         logger.info("✅ БД инициализирована")
         
         app = Application.builder().token(settings.BOT_TOKEN).build()

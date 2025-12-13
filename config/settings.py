@@ -22,9 +22,9 @@ class Settings:
     def __init__(self):
         self._validate_env()
         self._load_env()
-        self._parse_managers()
         self._parse_admins()
         self._parse_pult()
+        self._parse_legacy_managers()  # ✅ ДОБАВИТЬ
         self._validate_optional_env()
     
     def _validate_env(self):
@@ -96,23 +96,11 @@ class Settings:
         self.ZVONARI_GROUP_ID = int(os.getenv("ZVONARI_GROUP_ID"))
         self.GOOGLE_APPS_SCRIPT_URL = os.getenv("GOOGLE_APPS_SCRIPT_URL", "")
     
-    def _parse_managers(self):
-        """Парсинг списка менеджеров из .env"""
-        managers_str = os.getenv("MANAGERS_IDS", "")
-        self.MANAGERS = [
-            int(id.strip()) 
-            for id in managers_str.split(",") 
-            if id.strip().isdigit()
-        ]
-        
-        # Добавляем админа в список менеджеров, если его там нет
-        if self.ADMIN_ID not in self.MANAGERS:
-            self.MANAGERS.append(self.ADMIN_ID)
     
     def _parse_admins(self):
         """Парсинг списка админов из .env"""
         admins_str = os.getenv("ADMIN_IDS", "")
-        
+
         if admins_str:
             # Если есть ADMIN_IDS - используем его
             self.ADMINS = [
@@ -123,12 +111,7 @@ class Settings:
         else:
             # Иначе используем старый ADMIN_ID
             self.ADMINS = [self.ADMIN_ID]
-        
-        # Добавляем всех админов в менеджеры
-        for admin_id in self.ADMINS:
-            if admin_id not in self.MANAGERS:
-                self.MANAGERS.append(admin_id)
-    
+
     def _parse_pult(self):
         """Парсинг списка пульта из .env"""
         pult_str = os.getenv("PULT_IDS", "")
@@ -141,35 +124,59 @@ class Settings:
             ]
         else:
             self.PULT = []
+
+    def _parse_legacy_managers(self):
+        """
+        Парсинг СТАРЫХ менеджеров для миграции
         
-        # Добавляем пульт в менеджеры
-        for pult_id in self.PULT:
-            if pult_id not in self.MANAGERS:
-                self.MANAGERS.append(pult_id)
-    
+        ВАЖНО:
+        - Эти менеджеры будут мигрированы в БД при старте
+        - После миграции УДАЛИТЕ MANAGERS_IDS из .env
+        - Далее менеджеры ТОЛЬКО из БД
+        """
+        managers_str = os.getenv("MANAGERS_IDS", "")
+        
+        if managers_str:
+            self._legacy_managers = [
+                int(id.strip()) 
+                for id in managers_str.split(",") 
+                if id.strip().isdigit()
+            ]
+            
+            from utils.logger import logger
+            logger.warning("=" * 60)
+            logger.warning("⚠️ ОБНАРУЖЕНО: MANAGERS_IDS в .env")
+            logger.warning(f"   Найдено {len(self._legacy_managers)} менеджеров для миграции")
+            logger.warning("   Они будут автоматически мигрированы в БД при старте")
+            logger.warning("")
+            logger.warning("   📝 ПОСЛЕ МИГРАЦИИ:")
+            logger.warning("   1. Проверьте логи - должна пройти миграция")
+            logger.warning("   2. Проверьте 'Управление ботом' -> 'Список менеджеров'")
+            logger.warning("   3. УДАЛИТЕ строку MANAGERS_IDS из .env")
+            logger.warning("   4. Перезапустите бота")
+            logger.warning("=" * 60)
+        else:
+            self._legacy_managers = []
+
     def get_telephony_groups(self) -> Dict[str, int]:
         """Возвращает маппинг телефонии на группы"""
         return {
             "BMW": self.BMW_GROUP_ID,
             "Звонари": self.ZVONARI_GROUP_ID
         }
-    
+
     def validate_runtime(self) -> List[str]:
         """
-        ✅ НОВОЕ: Проверка конфигурации во время работы
+        Проверка конфигурации во время работы
         
         Returns:
             Список проблем (пустой если всё ОК)
         """
         issues = []
         
-        # Проверка доступности групп (можно расширить)
+        # Проверка доступности групп
         if self.BMW_GROUP_ID == self.ZVONARI_GROUP_ID:
             issues.append("BMW_GROUP_ID и ZVONARI_GROUP_ID одинаковые!")
-        
-        # Проверка что есть хотя бы один менеджер
-        if not self.MANAGERS:
-            issues.append("Нет ни одного менеджера в системе!")
         
         # Проверка что есть хотя бы один админ
         if not self.ADMINS:
@@ -181,8 +188,7 @@ class Settings:
 # Создаём глобальный экземпляр настроек
 try:
     settings = Settings()
-    
-    # ✅ НОВОЕ: Проверяем runtime проблемы
+    # Проверяем runtime проблемы
     runtime_issues = settings.validate_runtime()
     if runtime_issues:
         from utils.logger import logger
