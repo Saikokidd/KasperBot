@@ -6,6 +6,8 @@ handlers/management.py - ЧИСТЫЙ UX
 ✅ Только ОДНО сообщение после операции (результат + кнопка)
 ✅ НЕТ "Готово!" и других лишних сообщений
 ✅ Пользователь сразу видит результат и может продолжить
+✅ ДОБАВЛЕНО: Упрощённое управление быстрыми ошибками
+✅ ИСПРАВЛЕНО: Флаги для предотвращения алертов "Неизвестная команда"
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -15,6 +17,7 @@ from services.user_service import user_service
 from keyboards.inline import get_management_menu, get_telephony_type_keyboard
 from utils.state import clear_all_states
 from utils.logger import logger
+from database.models import db
 
 
 # Состояния
@@ -129,7 +132,6 @@ async def add_manager_process(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_id, username, first_name, update.effective_user.id
     )
     
-    # ✅ ЧИСТЫЙ UX: Только результат + кнопка назад
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("« К управлению менеджерами", callback_data="mgmt_managers")]
     ])
@@ -169,7 +171,6 @@ async def remove_manager_process(update: Update, context: ContextTypes.DEFAULT_T
     
     success, message = management_service.remove_manager(user_id)
     
-    # ✅ ЧИСТЫЙ UX
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("« К управлению менеджерами", callback_data="mgmt_managers")]
     ])
@@ -313,7 +314,6 @@ async def add_telephony_group(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('tel_code', None)
     context.user_data.pop('tel_type', None)
     
-    # ✅ ЧИСТЫЙ UX
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("« К управлению телефониями", callback_data="mgmt_telephonies")]
     ])
@@ -349,7 +349,6 @@ async def remove_telephony_process(update: Update, context: ContextTypes.DEFAULT
     
     success, message = management_service.remove_telephony(code)
     
-    # ✅ ЧИСТЫЙ UX
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("« К управлению телефониями", callback_data="mgmt_telephonies")]
     ])
@@ -418,7 +417,6 @@ async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text("📤 Отправка рассылки...")
     
     try:
-        from database.models import db
         managers = db.get_all_managers()
         
         stats = {"total": len(managers), "success": 0, "failed": 0}
@@ -460,7 +458,7 @@ async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_all_states(context)
 
 
-# ===== БЫСТРЫЕ ОШИБКИ =====
+# ===== БЫСТРЫЕ ОШИБКИ (УПРОЩЁННАЯ СИСТЕМА) =====
 
 async def quick_errors_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню управления быстрыми ошибками"""
@@ -522,6 +520,9 @@ async def quick_errors_add_start(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     
+    # ✅ УСТАНОВИТЬ ФЛАГ
+    context.user_data['awaiting_qe_code_add'] = True
+    
     await query.message.edit_text(
         "➕ <b>Добавить в быстрые ошибки</b>\n\n"
         "Отправьте <b>код</b> телефонии (например: <code>bmw</code>)\n\n"
@@ -537,6 +538,10 @@ async def quick_errors_add_start(update: Update, context: ContextTypes.DEFAULT_T
 
 async def quick_errors_add_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка добавления телефонии"""
+    
+    # ✅ УБРАТЬ ФЛАГ СРАЗУ
+    context.user_data.pop('awaiting_qe_code_add', None)
+    
     code = update.message.text.strip().lower()
     
     # Проверяем формат
@@ -595,6 +600,9 @@ async def quick_errors_remove_start(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     
+    # ✅ УСТАНОВИТЬ ФЛАГ
+    context.user_data['awaiting_qe_code_remove'] = True
+    
     await query.message.edit_text(
         "➖ <b>Удалить из быстрых ошибок</b>\n\n"
         "Отправьте <b>код</b> телефонии (например: <code>bmw</code>)\n\n"
@@ -607,6 +615,10 @@ async def quick_errors_remove_start(update: Update, context: ContextTypes.DEFAUL
 
 async def quick_errors_remove_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка удаления телефонии"""
+    
+    # ✅ УБРАТЬ ФЛАГ СРАЗУ
+    context.user_data.pop('awaiting_qe_code_remove', None)
+    
     code = update.message.text.strip().lower()
     
     success = db.remove_quick_error_telephony(code)
@@ -635,11 +647,11 @@ async def quick_errors_remove_process(update: Update, context: ContextTypes.DEFA
     clear_all_states(context)
     return ConversationHandler.END
 
+
 # ===== ОТМЕНА =====
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена операции"""
-    # ✅ ЧИСТЫЙ UX: Без лишнего текста
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("« К управлению", callback_data="mgmt_menu")]
     ])
@@ -654,6 +666,8 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('tel_type', None)
     context.user_data.pop('broadcast_message_id', None)
     context.user_data.pop('broadcast_chat_id', None)
+    context.user_data.pop('awaiting_qe_code_add', None)  # ✅ НОВОЕ
+    context.user_data.pop('awaiting_qe_code_remove', None)  # ✅ НОВОЕ
     clear_all_states(context)
     
     return ConversationHandler.END

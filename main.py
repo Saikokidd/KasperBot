@@ -1,12 +1,10 @@
 """
-main.py - КРИТИЧЕСКИЙ ФИКС
-ConversationHandlers с per_message=False - НЕ пропускают сообщения дальше
+main.py - ПОЛНАЯ ВЕРСИЯ с быстрыми ошибками
 
 ИЗМЕНЕНИЯ:
-✅ per_message=False - сообщения НЕ идут в message_handler
-✅ per_chat=True - разные диалоги для разных чатов
-✅ per_user=True - разные диалоги для разных пользователей
-✅ allow_reentry=True - можно начать заново
+✅ Добавлены ConversationHandlers для быстрых ошибок
+✅ Правильная регистрация в нужных группах
+✅ Обработка callback'ов для быстрых ошибок
 """
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -56,6 +54,14 @@ from handlers.analytics import (
     show_dashboard_start, show_dashboard_page
 )
 
+# ✅ НОВОЕ: Импорт обработчиков быстрых ошибок
+from handlers.quick_errors import (
+    handle_quick_error_callback,
+    handle_change_sip_callback,
+    handle_sip_input_for_quick_error,
+    handle_custom_error_input
+)
+
 
 async def fallback_callback(update, context):
     """Fallback для неизвестных callback"""
@@ -64,7 +70,7 @@ async def fallback_callback(update, context):
     known_patterns = [
         'mgmt_', 'role_', 'tel_', 'fix_', 'wait_', 'wrong_', 'sim_',
         'stats_', 'dash_', 'broadcast_confirm', 'tel_type_', 'noop',
-        'select_tel_'
+        'select_tel_', 'qerr_', 'change_sip'
     ]
     
     is_known = any(query.data.startswith(p) for p in known_patterns)
@@ -75,13 +81,7 @@ async def fallback_callback(update, context):
 
 
 def register_handlers(app: Application):
-    """
-    Регистрация всех обработчиков
-    
-    КРИТИЧНО:
-    - ConversationHandlers с per_message=False
-    - НЕ пропускают сообщения в message_handler
-    """
+    """Регистрация всех обработчиков"""
     logger.info("🔧 Начало регистрации обработчиков...")
     
     # ===== GROUP -1: КОМАНДЫ =====
@@ -91,11 +91,23 @@ def register_handlers(app: Application):
     
     # ===== GROUP 0: CALLBACKS =====
     
+    # Выбор телефонии (Inline)
     app.add_handler(
         CallbackQueryHandler(handle_telephony_selection_callback, pattern="^select_tel_"),
         group=0
     )
     logger.info("✅ Inline выбор телефонии (group=0)")
+    
+    # ✅ НОВОЕ: Быстрые ошибки (callback'и)
+    app.add_handler(
+        CallbackQueryHandler(handle_quick_error_callback, pattern="^qerr_"),
+        group=0
+    )
+    app.add_handler(
+        CallbackQueryHandler(handle_change_sip_callback, pattern="^change_sip$"),
+        group=0
+    )
+    logger.info("✅ Быстрые ошибки callbacks (group=0)")
     
     # Управление
     app.add_handler(CallbackQueryHandler(show_management_menu, pattern="^mgmt_menu$"), group=0)
@@ -105,7 +117,7 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(list_telephonies, pattern="^mgmt_list_tel$"), group=0)
     app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="^broadcast_confirm$"), group=0)
 
-    # Быстрые ошибки
+    # Быстрые ошибки (меню управления)
     app.add_handler(CallbackQueryHandler(quick_errors_menu, pattern="^mgmt_quick_errors$"), group=0)
     app.add_handler(CallbackQueryHandler(quick_errors_list, pattern="^qe_list$"), group=0)
 
@@ -134,8 +146,7 @@ def register_handlers(app: Application):
     
     # ===== GROUP 1: CONVERSATIONHANDLERS =====
     
-    # ✅ КРИТИЧНО: per_message=False - НЕ пропускает сообщения дальше
-    
+    # Менеджеры
     add_manager_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_manager_start, pattern="^mgmt_add_manager$")],
         states={
@@ -145,7 +156,7 @@ def register_handlers(app: Application):
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        per_message=False,  # ✅ КРИТИЧНО
+        per_message=False,
         per_chat=True,
         per_user=True,
         allow_reentry=True,
@@ -161,7 +172,7 @@ def register_handlers(app: Application):
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        per_message=False,  # ✅ КРИТИЧНО
+        per_message=False,
         per_chat=True,
         per_user=True,
         allow_reentry=True,
@@ -169,6 +180,7 @@ def register_handlers(app: Application):
     )
     app.add_handler(remove_manager_conv, group=1)
     
+    # Телефонии
     add_tel_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_telephony_start, pattern="^mgmt_add_tel$")],
         states={
@@ -178,7 +190,7 @@ def register_handlers(app: Application):
             WAITING_TEL_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_telephony_group)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        per_message=False,  # ✅ КРИТИЧНО
+        per_message=False,
         per_chat=True,
         per_user=True,
         allow_reentry=True,
@@ -192,7 +204,7 @@ def register_handlers(app: Application):
             WAITING_TEL_CODE_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_telephony_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        per_message=False,  # ✅ КРИТИЧНО
+        per_message=False,
         per_chat=True,
         per_user=True,
         allow_reentry=True,
@@ -200,13 +212,14 @@ def register_handlers(app: Application):
     )
     app.add_handler(remove_tel_conv, group=1)
     
+    # Рассылка
     broadcast_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(broadcast_start, pattern="^mgmt_broadcast$")],
         states={
             WAITING_BROADCAST_MESSAGE: [MessageHandler((filters.ALL & ~filters.COMMAND), broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        per_message=False,  # ✅ КРИТИЧНО
+        per_message=False,
         per_chat=True,
         per_user=True,
         allow_reentry=True,
@@ -214,11 +227,7 @@ def register_handlers(app: Application):
     )
     app.add_handler(broadcast_conv, group=1)
     
-    logger.info("✅ Management ConversationHandlers (group=1)")
-    logger.info("   ℹ️ per_message=False - сообщения НЕ идут в message_handler")
-
-    # ===== БЫСТРЫЕ ОШИБКИ =====
-
+    # ✅ НОВОЕ: Быстрые ошибки (управление через админку)
     qe_add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(quick_errors_add_start, pattern="^qe_add$")],
         states={
@@ -251,6 +260,8 @@ def register_handlers(app: Application):
     )
     app.add_handler(qe_remove_conv, group=1)
     
+    logger.info("✅ Management ConversationHandlers (group=1)")
+    
     # ===== GROUP 2: MESSAGE HANDLER (ПОСЛЕДНИМ!) =====
     
     app.add_handler(MessageHandler(
@@ -275,11 +286,11 @@ def main():
     try:
         logger.info("🚀 Запуск бота...")
         
-        # ✅ НОВОЕ: Автоматическая миграция менеджеров из .env в БД
+        # Автомиграция менеджеров из .env в БД
         from services.user_service import user_service
         user_service.migrate_env_managers_to_db()
         
-        # ✅ ИЗМЕНЕНО: Теперь показываем правильную статистику
+        # Статистика
         logger.info(f"👑 Админов: {len(settings.ADMINS)}")
         logger.info(f"🎛 Пульт: {len(settings.PULT)}")
         

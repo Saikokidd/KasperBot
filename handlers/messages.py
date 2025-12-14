@@ -145,6 +145,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Главный обработчик текстовых сообщений
     
     ✅ КРИТИЧНО: Игнорирует сообщения обработанные ConversationHandler
+    ✅ ДОБАВЛЕНО: Поддержка быстрых ошибок (SIP и кастомные ошибки)
     """
     user_id = update.effective_user.id
     
@@ -156,11 +157,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
     
-    # ✅ КРИТИЧНО: Проверяем что ConversationHandler НЕ активен
-    # Если есть временные данные от management - игнорируем
+    # ✅ ИСПРАВЛЕНО: Добавлены ключи быстрых ошибок
     management_keys = [
         'tel_name', 'tel_code', 'tel_type',
-        'broadcast_message_id', 'broadcast_chat_id'
+        'broadcast_message_id', 'broadcast_chat_id',
+        # ✅ НОВОЕ: Ключи для ConversationHandler быстрых ошибок
+        'awaiting_qe_code_add', 'awaiting_qe_code_remove'
     ]
     
     if any(key in context.user_data for key in management_keys):
@@ -177,6 +179,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверка режима поддержки
     if await handle_support_message(update, context):
+        return
+    
+    # ✅ НОВОЕ: Проверка быстрых ошибок
+    from handlers.quick_errors import handle_sip_input_for_quick_error, handle_custom_error_input
+    
+    # Проверка SIP для быстрых ошибок
+    if await handle_sip_input_for_quick_error(update, context):
+        return
+    
+    # Проверка кастомной ошибки для быстрых ошибок
+    if await handle_custom_error_input(update, context):
         return
     
     # Список кнопок меню

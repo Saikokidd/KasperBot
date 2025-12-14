@@ -1,18 +1,19 @@
 """
 handlers/menu.py - ПОЛНОЕ ИСПРАВЛЕНИЕ
-Правильная работа с Inline кнопками телефоний
+Правильная работа с Inline кнопками телефоний + проверка быстрых ошибок
 
 КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
 ✅ НЕ используем Reply клавиатуру для телефоний (только Inline)
 ✅ Всегда очищаем состояние при возврате в меню
 ✅ Не показываем лишних предупреждений
+✅ ДОБАВЛЕНО: Проверка быстрых ошибок через БД
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from config.constants import USEFUL_LINKS, MESSAGES
 from keyboards.reply import get_menu_by_role
-from keyboards.inline import get_management_menu
+from keyboards.inline import get_management_menu, get_quick_errors_keyboard
 from utils.state import get_user_role, set_support_mode, clear_tel_choice, set_tel_choice, clear_all_states
 from utils.logger import logger
 
@@ -65,7 +66,7 @@ async def handle_telephony_selection_callback(update: Update, context: ContextTy
     """
     Обработчик Inline кнопок выбора телефонии
     
-    ✅ КРИТИЧНО: Устанавливает флаг что пользователь выбрал телефонию
+    ✅ КРИТИЧНО: Проверяет быстрая ли телефония через БД
     """
     query = update.callback_query
     await query.answer()
@@ -86,18 +87,66 @@ async def handle_telephony_selection_callback(update: Update, context: ContextTy
         )
         return
     
-    # ✅ КРИТИЧНО: Сохраняем выбор
-    set_tel_choice(context, tel['name'], tel['code'])
+    # ✅ КРИТИЧЕСКАЯ ПРОВЕРКА: Быстрая ли телефония?
+    is_quick = db.is_quick_error_telephony(tel_code)
     
-    logger.info(f"✅ User {query.from_user.id} выбрал телефонию: {tel['name']} ({tel['code']})")
+    if is_quick:
+        # ===== БЫСТРЫЕ ОШИБКИ =====
+        logger.info(f"⚡️ Телефония {tel_code} использует быстрые ошибки")
+        
+        user_id = query.from_user.id
+        
+        # Проверяем SIP
+        if db.is_sip_valid_today(user_id):
+            sip_data = db.get_manager_sip(user_id)
+            
+            if sip_data and sip_data.get('sip_number'):
+                sip = sip_data['sip_number']
+                logger.info(f"✅ SIP уже указан: {sip}")
+                
+                # Сохраняем контекст
+                context.user_data["quick_error_sip"] = sip
+                context.user_data["quick_error_tel_name"] = tel['name']
+                context.user_data["quick_error_tel_code"] = tel_code
+                context.user_data["quick_error_group_id"] = tel['group_id']
+                
+                # Показываем кнопки ошибок
+                await query.message.edit_text(
+                    MESSAGES["choose_quick_error"].format(sip=sip),
+                    reply_markup=get_quick_errors_keyboard()
+                )
+                return
+        
+        # SIP не указан - запрашиваем
+        logger.info(f"⚠️ SIP не указан, запрашиваем")
+        
+        # Сохраняем контекст
+        context.user_data["quick_error_tel_name"] = tel['name']
+        context.user_data["quick_error_tel_code"] = tel_code
+        context.user_data["quick_error_group_id"] = tel['group_id']
+        context.user_data["awaiting_sip_for_quick_error"] = True
+        
+        await query.message.edit_text(MESSAGES["sip_prompt"])
+        
+        # Здесь должен подхватить message_handler для обработки SIP
+        return
     
-    # Уведомляем пользователя
-    await query.message.edit_text(
-        f"✅ Вы выбрали: <b>{tel['name']}</b>\n\n"
-        f"📝 Теперь отправьте описание ошибки\n"
-        f"⏱ Выбор активен 10 минут.",
-        parse_mode="HTML"
-    )
+    else:
+        # ===== ОБЫЧНЫЙ FLOW =====
+        logger.info(f"📝 Телефония {tel_code} использует обычный ввод")
+        
+        # Сохраняем выбор
+        set_tel_choice(context, tel['name'], tel_code)
+        
+        logger.info(f"✅ User {query.from_user.id} выбрал телефонию: {tel['name']} ({tel_code})")
+        
+        # Уведомляем пользователя
+        await query.message.edit_text(
+            f"✅ Вы выбрали: <b>{tel['name']}</b>\n\n"
+            f"📝 Теперь отправьте описание ошибки\n"
+            f"⏱ Выбор активен 10 минут.",
+            parse_mode="HTML"
+        )
 
 
 async def handle_useful_links_button(update: Update, context: ContextTypes.DEFAULT_TYPE):

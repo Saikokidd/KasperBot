@@ -1,11 +1,13 @@
 """
-ИСПРАВЛЕННАЯ ПОЛНАЯ ВЕРСИЯ: database/models.py
-Добавлена поддержка SIP менеджеров
+ПОЛНАЯ ВЕРСИЯ: database/models.py
+Добавлена поддержка быстрых ошибок через таблицу quick_error_telephonies
 
 ИЗМЕНЕНИЯ:
-✅ Исправлен race condition в reset_all_sips
-✅ Добавлены context managers для безопасного закрытия соединений
-✅ Улучшена обработка ошибок
+✅ Добавлены методы для работы с quick_error_telephonies
+✅ add_quick_error_telephony() - добавить телефонию
+✅ remove_quick_error_telephony() - удалить телефонию
+✅ is_quick_error_telephony() - проверить быстрая ли
+✅ get_quick_error_telephonies() - получить список
 """
 import sqlite3
 from datetime import datetime, date, timedelta
@@ -104,7 +106,7 @@ class Database:
             )
         """)
         
-        # ✅ НОВАЯ ТАБЛИЦА: SIP менеджеров
+        # Таблица SIP менеджеров
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS manager_sips (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +118,7 @@ class Database:
             )
         """)
 
-        # Таблица телефоний с быстрыми ошибками
+        # ✅ НОВАЯ ТАБЛИЦА: Телефонии с быстрыми ошибками
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS quick_error_telephonies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -258,16 +260,12 @@ class Database:
             return False
     
     def get_all_telephonies(self) -> List[Dict]:
-        """
-        Возвращает список всех телефоний
-        
-        ✅ ИСПРАВЛЕНО: Теперь возвращает quick_errors_enabled
-        """
+        """Возвращает список всех телефоний"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT name, code, type, group_id, enabled, quick_errors_enabled FROM telephonies WHERE enabled = 1 ORDER BY name"
+                    "SELECT name, code, type, group_id, enabled FROM telephonies WHERE enabled = 1 ORDER BY name"
                 )
                 rows = cursor.fetchall()
             
@@ -277,8 +275,7 @@ class Database:
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4],
-                    "quick_errors_enabled": bool(row[5])  # ✅ ДОБАВЛЕНО
+                    "enabled": row[4]
                 }
                 for row in rows
             ]
@@ -287,16 +284,12 @@ class Database:
             return []
     
     def get_telephony_by_code(self, code: str) -> Optional[Dict]:
-        """
-        Получает телефонию по коду
-        
-        ✅ ИСПРАВЛЕНО: Теперь возвращает quick_errors_enabled
-        """
+        """Получает телефонию по коду"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT name, code, type, group_id, enabled, quick_errors_enabled FROM telephonies WHERE code = ?",
+                    "SELECT name, code, type, group_id, enabled FROM telephonies WHERE code = ?",
                     (code,)
                 )
                 row = cursor.fetchone()
@@ -307,8 +300,7 @@ class Database:
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4],
-                    "quick_errors_enabled": bool(row[5])  # ✅ ДОБАВЛЕНО
+                    "enabled": row[4]
                 }
             return None
         except Exception as e:
@@ -477,16 +469,7 @@ class Database:
     # ===== SIP МЕНЕДЖЕРОВ =====
     
     def save_manager_sip(self, user_id: int, sip_number: str) -> bool:
-        """
-        Сохранить/обновить SIP менеджера
-        
-        Args:
-            user_id: ID менеджера
-            sip_number: Номер SIP
-            
-        Returns:
-            True если успешно
-        """
+        """Сохранить/обновить SIP менеджера"""
         try:
             today = date.today().isoformat()
             
@@ -508,15 +491,7 @@ class Database:
             return False
     
     def get_manager_sip(self, user_id: int) -> Optional[Dict]:
-        """
-        Получить SIP менеджера
-        
-        Args:
-            user_id: ID менеджера
-            
-        Returns:
-            {'sip_number': str, 'last_updated': str} или None
-        """
+        """Получить SIP менеджера"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
@@ -538,15 +513,7 @@ class Database:
             return None
     
     def is_sip_valid_today(self, user_id: int) -> bool:
-        """
-        Проверить, указан ли SIP сегодня
-        
-        Args:
-            user_id: ID менеджера
-            
-        Returns:
-            True если SIP указан сегодня
-        """
+        """Проверить, указан ли SIP сегодня"""
         sip_data = self.get_manager_sip(user_id)
         
         if not sip_data:
@@ -556,14 +523,7 @@ class Database:
         return sip_data['last_updated'] == today
     
     def reset_all_sips(self) -> int:
-        """
-        Сбросить валидность всех SIP (вызывается утром в 8:00)
-        
-        ✅ ИСПРАВЛЕНО: Теперь не перезатирает SIP, которые уже были обновлены сегодня
-        
-        Returns:
-            Количество сброшенных SIP
-        """
+        """Сбросить валидность всех SIP (вызывается утром в 8:00)"""
         try:
             yesterday = (date.today() - timedelta(days=1)).isoformat()
             today = date.today().isoformat()
@@ -571,8 +531,6 @@ class Database:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 
-                # ✅ ИСПРАВЛЕНИЕ: Обновляем только те SIP, которые НЕ были обновлены сегодня
-                # Это предотвращает race condition при перезапуске бота
                 cursor.execute("""
                     UPDATE manager_sips 
                     SET last_updated = ?
@@ -592,85 +550,109 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка сброса SIP: {e}")
             return 0
-    def toggle_quick_errors(self, code: str) -> Optional[bool]:
+
+    # ===== БЫСТРЫЕ ОШИБКИ (УПРОЩЁННАЯ СИСТЕМА) =====
+
+    def add_quick_error_telephony(self, code: str) -> bool:
         """
-        Переключить быстрые ошибки для телефонии
+        Добавить телефонию в быстрые ошибки
+        
+        Args:
+            code: Код телефонии (bmw, zvon, и т.д.)
+            
+        Returns:
+            True если успешно
+        """
+        try:
+            # Проверяем что телефония существует и белая
+            tel = self.get_telephony_by_code(code)
+            
+            if not tel:
+                logger.warning(f"⚠️ Телефония {code} не найдена")
+                return False
+            
+            if tel['type'] != 'white':
+                logger.warning(f"⚠️ Телефония {code} не белая (тип: {tel['type']})")
+                return False
+            
+            # Добавляем в быстрые
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO quick_error_telephonies (telephony_code) VALUES (?)",
+                    (code,)
+                )
+                conn.commit()
+            
+            logger.info(f"✅ Телефония {code} добавлена в быстрые ошибки")
+            return True
+            
+        except sqlite3.IntegrityError:
+            logger.warning(f"⚠️ Телефония {code} уже в быстрых ошибках")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления в быстрые ошибки: {e}")
+            return False
+
+    def remove_quick_error_telephony(self, code: str) -> bool:
+        """
+        Удалить телефонию из быстрых ошибок
         
         Args:
             code: Код телефонии
             
         Returns:
-            Новое состояние (True/False) или None при ошибке
+            True если успешно
         """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                
-                # Получаем текущее состояние
                 cursor.execute(
-                    "SELECT quick_errors_enabled FROM telephonies WHERE code = ?",
+                    "DELETE FROM quick_error_telephonies WHERE telephony_code = ?",
                     (code,)
                 )
-                row = cursor.fetchone()
-                
-                if not row:
-                    logger.error(f"❌ Телефония {code} не найдена")
-                    return None
-                
-                current_state = bool(row[0])
-                new_state = not current_state
-                
-                # Переключаем
-                cursor.execute(
-                    "UPDATE telephonies SET quick_errors_enabled = ? WHERE code = ?",
-                    (int(new_state), code)
-                )
+                deleted = cursor.rowcount > 0
                 conn.commit()
-                
-                logger.info(f"✅ Быстрые ошибки для {code}: {new_state}")
-                return new_state
-                
+            
+            if deleted:
+                logger.info(f"✅ Телефония {code} удалена из быстрых ошибок")
+            else:
+                logger.warning(f"⚠️ Телефония {code} не была в быстрых ошибках")
+            
+            return deleted
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка переключения быстрых ошибок: {e}")
-            return None
+            logger.error(f"❌ Ошибка удаления из быстрых ошибок: {e}")
+            return False
 
-
-    def get_quick_errors_telephonies(self) -> List[Dict]:
+    def is_quick_error_telephony(self, code: str) -> bool:
         """
-        Получить белые телефонии с быстрыми ошибками
+        Проверить, является ли телефония быстрой
         
+        Args:
+            code: Код телефонии
+            
         Returns:
-            Список телефоний с включёнными быстрыми ошибками
+            True если телефония в быстрых ошибках
         """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT name, code, group_id 
-                    FROM telephonies 
-                    WHERE type = 'white' 
-                    AND enabled = 1 
-                    AND quick_errors_enabled = 1
-                    ORDER BY name
-                """)
-                rows = cursor.fetchall()
+                cursor.execute(
+                    "SELECT 1 FROM quick_error_telephonies WHERE telephony_code = ?",
+                    (code,)
+                )
+                exists = cursor.fetchone() is not None
             
-            return [
-                {
-                    "name": row[0],
-                    "code": row[1],
-                    "group_id": row[2]
-                }
-                for row in rows
-            ]
+            return exists
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка получения телефоний для быстрых ошибок: {e}")
-            return []
+            logger.error(f"❌ Ошибка проверки быстрых ошибок: {e}")
+            return False
 
-
-    def get_white_telephonies_with_qe_status(self) -> List[Dict]:
+    def get_quick_error_telephonies(self) -> List[Dict]:
         """
-        Получить все белые телефонии со статусом быстрых ошибок
+        Получить список всех телефоний с быстрыми ошибками
         
         Returns:
             Список словарей с информацией о телефониях
@@ -679,10 +661,11 @@ class Database:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT name, code, group_id, enabled, quick_errors_enabled
-                    FROM telephonies 
-                    WHERE type = 'white'
-                    ORDER BY name
+                    SELECT t.name, t.code, t.group_id, qe.added_at
+                    FROM quick_error_telephonies qe
+                    JOIN telephonies t ON qe.telephony_code = t.code
+                    WHERE t.enabled = 1
+                    ORDER BY t.name
                 """)
                 rows = cursor.fetchall()
             
@@ -691,146 +674,15 @@ class Database:
                     "name": row[0],
                     "code": row[1],
                     "group_id": row[2],
-                    "enabled": bool(row[3]),
-                    "quick_errors_enabled": bool(row[4])
+                    "added_at": row[3]
                 }
                 for row in rows
             ]
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка получения белых телефоний: {e}")
+            logger.error(f"❌ Ошибка получения списка быстрых ошибок: {e}")
             return []
 
 
-    # ===== БЫСТРЫЕ ОШИБКИ =====
-
-def add_quick_error_telephony(self, code: str) -> bool:
-    """
-    Добавить телефонию в быстрые ошибки
-    
-    Args:
-        code: Код телефонии (bmw, zvon, и т.д.)
-        
-    Returns:
-        True если успешно
-    """
-    try:
-        # Проверяем что телефония существует и белая
-        tel = self.get_telephony_by_code(code)
-        
-        if not tel:
-            logger.warning(f"⚠️ Телефония {code} не найдена")
-            return False
-        
-        if tel['type'] != 'white':
-            logger.warning(f"⚠️ Телефония {code} не белая (тип: {tel['type']})")
-            return False
-        
-        # Добавляем в быстрые
-        with closing(self._get_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO quick_error_telephonies (telephony_code) VALUES (?)",
-                (code,)
-            )
-            conn.commit()
-        
-        logger.info(f"✅ Телефония {code} добавлена в быстрые ошибки")
-        return True
-        
-    except sqlite3.IntegrityError:
-        logger.warning(f"⚠️ Телефония {code} уже в быстрых ошибках")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Ошибка добавления в быстрые ошибки: {e}")
-        return False
-
-def remove_quick_error_telephony(self, code: str) -> bool:
-    """
-    Удалить телефонию из быстрых ошибок
-    
-    Args:
-        code: Код телефонии
-        
-    Returns:
-        True если успешно
-    """
-    try:
-        with closing(self._get_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM quick_error_telephonies WHERE telephony_code = ?",
-                (code,)
-            )
-            deleted = cursor.rowcount > 0
-            conn.commit()
-        
-        if deleted:
-            logger.info(f"✅ Телефония {code} удалена из быстрых ошибок")
-        else:
-            logger.warning(f"⚠️ Телефония {code} не была в быстрых ошибках")
-        
-        return deleted
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка удаления из быстрых ошибок: {e}")
-        return False
-
-def is_quick_error_telephony(self, code: str) -> bool:
-    """
-    Проверить, является ли телефония быстрой
-    
-    Args:
-        code: Код телефонии
-        
-    Returns:
-        True если телефония в быстрых ошибках
-    """
-    try:
-        with closing(self._get_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM quick_error_telephonies WHERE telephony_code = ?",
-                (code,)
-            )
-            exists = cursor.fetchone() is not None
-        
-        return exists
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка проверки быстрых ошибок: {e}")
-        return False
-
-def get_quick_error_telephonies(self) -> List[Dict]:
-    """
-    Получить список всех телефоний с быстрыми ошибками
-    
-    Returns:
-        Список словарей с информацией о телефониях
-    """
-    try:
-        with closing(self._get_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT t.name, t.code, t.group_id, qe.added_at
-                FROM quick_error_telephonies qe
-                JOIN telephonies t ON qe.telephony_code = t.code
-                WHERE t.enabled = 1
-                ORDER BY t.name
-            """)
-            rows = cursor.fetchall()
-        
-        return [
-            {
-                "name": row[0],
-                "code": row[1],
-                "group_id": row[2],
-                "added_at": row[3]
-            }
-            for row in rows
-        ]
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения списка быстрых ошибок: {e}")
-        return []
 # Глобальный экземпляр БД
 db = Database()
