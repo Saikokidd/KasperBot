@@ -1,11 +1,11 @@
 """
-handlers/quick_errors.py - УПРОЩЁННАЯ ВЕРСИЯ
-Работает через message_handler, без ConversationHandler
+handlers/quick_errors.py - ИСПРАВЛЕНО
+Убрана Reply клавиатура из edit_text()
 
-ЛОГИКА:
-1. Менеджер выбирает телефонию (в menu.py проверяется is_quick)
-2. Если быстрая → показываются кнопки с ошибками
-3. Нажатие кнопки → отправка в группу
+ИЗМЕНЕНИЯ:
+✅ edit_text() теперь без reply_markup
+✅ Reply меню отправляется отдельным сообщением
+✅ Исправлена ошибка "Inline keyboard expected"
 """
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -20,6 +20,8 @@ from utils.logger import logger
 async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработка нажатия кнопки быстрой ошибки
+    
+    ✅ ИСПРАВЛЕНО: Убрана Reply клавиатура из edit_text()
     
     Callback: qerr_1, qerr_2, ..., qerr_10
     """
@@ -49,7 +51,11 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
     
     # Свой вариант (кнопка 10)
     if error_code == "10":
-        await query.message.edit_text(MESSAGES["custom_error_prompt"])
+        # ✅ ИСПРАВЛЕНИЕ: Удаляем Inline клавиатуру при запросе кастомной ошибки
+        await query.message.edit_text(
+            MESSAGES["custom_error_prompt"],
+            reply_markup=None
+        )
         context.user_data["awaiting_custom_error"] = True
         return
     
@@ -75,14 +81,26 @@ async def handle_quick_error_callback(update: Update, context: ContextTypes.DEFA
         await query.message.edit_text("⚠️ Не удалось отправить")
         return
     
-    role = get_user_role(context)
-    current_menu = get_menu_by_role(role)
-    
-    await query.message.edit_text(
+    # ✅ ИСПРАВЛЕНИЕ: Редактируем с явным reply_markup=None (удаляем Inline кнопки)
+    success_text = (
         f"✅ Ошибка отправлена!\n\n"
         f"📞 {tel_name}\n"
         f"SIP: {sip}\n"
-        f"Ошибка: {error_text}",
+        f"Ошибка: {error_text}"
+    )
+    
+    await query.message.edit_text(
+        success_text,
+        reply_markup=None  # ✅ КРИТИЧНО: Явно удаляем Inline клавиатуру
+    )
+    
+    # ✅ ИСПРАВЛЕНИЕ: Reply меню отправляем ОТДЕЛЬНЫМ сообщением
+    role = get_user_role(context)
+    current_menu = get_menu_by_role(role)
+    
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="Выберите действие:",
         reply_markup=current_menu
     )
     
@@ -98,7 +116,11 @@ async def handle_change_sip_callback(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
     
-    await query.message.edit_text(MESSAGES["sip_prompt"])
+    # ✅ ИСПРАВЛЕНИЕ: Удаляем Inline клавиатуру при изменении SIP
+    await query.message.edit_text(
+        MESSAGES["sip_prompt"],
+        reply_markup=None
+    )
     context.user_data["awaiting_sip_for_quick_error"] = True
 
 
@@ -143,6 +165,8 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
     """
     Обработка ввода кастомной ошибки (вызывается из message_handler)
     
+    ✅ ИСПРАВЛЕНО: Убрана Reply клавиатура из reply_text
+    
     Returns:
         True если сообщение обработано как кастомная ошибка
     """
@@ -184,14 +208,22 @@ async def handle_custom_error_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("⚠️ Не удалось отправить")
         return True
     
+    # ✅ ИСПРАВЛЕНИЕ: Отправляем ТОЛЬКО текст (без Reply клавиатуры)
+    success_text = (
+        f"✅ Ошибка отправлена!\n\n"
+        f"📞 {tel_name}\n"
+        f"SIP: {sip}\n"
+        f"Ошибка: {error_text}"
+    )
+    
+    await update.message.reply_text(success_text)
+    
+    # ✅ ИСПРАВЛЕНИЕ: Reply меню отправляем ОТДЕЛЬНО
     role = get_user_role(context)
     current_menu = get_menu_by_role(role)
     
     await update.message.reply_text(
-        f"✅ Ошибка отправлена!\n\n"
-        f"📞 {tel_name}\n"
-        f"SIP: {sip}\n"
-        f"Ошибка: {error_text}",
+        "Выберите действие:",
         reply_markup=current_menu
     )
     
