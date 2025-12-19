@@ -1,6 +1,6 @@
 """
 ФИНАЛЬНАЯ ВЕРСИЯ: services/scheduler_service.py
-С уведомлениями админу при критических ошибках
+С уведомлениями админу при критических ошибках + статистика баз
 """
 import asyncio
 from datetime import datetime
@@ -25,16 +25,11 @@ class SchedulerService:
         self._last_update_success = None
         self._update_count = 0
         self._error_count = 0
-        self._consecutive_errors = 0  # ✅ НОВОЕ: Счётчик ошибок подряд
-        self._bot = None  # ✅ НОВОЕ: Экземпляр бота для уведомлений
+        self._consecutive_errors = 0
+        self._bot = None
     
     def set_bot(self, bot: Bot):
-        """
-        Установить экземпляр бота для отправки уведомлений
-        
-        Args:
-            bot: Экземпляр Telegram бота
-        """
+        """Установить экземпляр бота для отправки уведомлений"""
         self._bot = bot
         logger.info("✅ Бот установлен для отправки уведомлений")
     
@@ -56,20 +51,18 @@ class SchedulerService:
                     logger.error(f"⚠️ Ошибка закрытия event loop: {e}")
     
     def _update_stats_job(self):
-        """Задача обновления статистики С УВЕДОМЛЕНИЯМИ"""
+        """Задача обновления статистики менеджеров"""
         try:
             from services.google_sheets_service import google_sheets_service
             
             now = datetime.now(self.timezone)
-            logger.info(f"⏰ Запуск обновления статистики по расписанию ({now.strftime('%H:%M')})")
+            logger.info(f"⏰ Запуск обновления статистики менеджеров ({now.strftime('%H:%M')})")
             
-            # Проверка что сервис инициализирован
             if not google_sheets_service.client or not google_sheets_service.spreadsheet:
                 logger.error("❌ Google Sheets сервис не инициализирован!")
                 self._error_count += 1
                 self._consecutive_errors += 1
                 
-                # ✅ Уведомление если 3 ошибки подряд
                 if self._consecutive_errors >= 3 and self._bot:
                     self._send_critical_notification(
                         "Google Sheets не инициализирован",
@@ -77,30 +70,26 @@ class SchedulerService:
                     )
                 return
             
-            # Выполнение обновления (с retry внутри)
             self._run_async_task(google_sheets_service.update_stats())
             
-            # ✅ УСПЕХ - Обнуляем счётчики
             if self._consecutive_errors >= 3:
-                # Было много ошибок, но теперь восстановились - уведомляем
                 if self._bot:
                     self._send_recovery_notification("Google Sheets обновление")
             
-            self._consecutive_errors = 0  # Сброс счётчика
+            self._consecutive_errors = 0
             self._last_update_success = now
             self._update_count += 1
             
-            logger.info(f"✅ Обновление завершено успешно (всего обновлений: {self._update_count})")
+            logger.info(f"✅ Обновление статистики менеджеров завершено (всего: {self._update_count})")
             
         except Exception as e:
             self._error_count += 1
             self._consecutive_errors += 1
             
             error_msg = str(e)
-            logger.error(f"❌ Ошибка задачи обновления статистики: {error_msg}")
+            logger.error(f"❌ Ошибка обновления статистики менеджеров: {error_msg}")
             logger.error(f"⚠️ Ошибок подряд: {self._consecutive_errors}, всего: {self._error_count}")
             
-            # ✅ УВЕДОМЛЕНИЕ после 3 ошибок подряд
             if self._consecutive_errors >= 3 and self._bot:
                 additional_info = (
                     f"• Всего обновлений: {self._update_count}\n"
@@ -114,9 +103,36 @@ class SchedulerService:
                     additional_info
                 )
             
-            # Предупреждение в логах
             if self._consecutive_errors >= 5:
                 logger.warning(f"⚠️ КРИТИЧНО: {self._consecutive_errors} ошибок обновления подряд!")
+    
+    def _update_base_stats_job(self):
+        """
+        ✅ НОВАЯ ЗАДАЧА: Обновление статистики баз
+        """
+        try:
+            from services.base_stats_service import base_stats_service
+            
+            now = datetime.now(self.timezone)
+            logger.info(f"⏰ Запуск обновления статистики баз ({now.strftime('%H:%M')})")
+            
+            if not base_stats_service.client or not base_stats_service.spreadsheet:
+                logger.error("❌ BaseStatsService не инициализирован!")
+                logger.error("   Проверьте BASE_STATS_SHEET_ID в .env")
+                return
+            
+            self._run_async_task(base_stats_service.update_stats())
+            
+            logger.info(f"✅ Обновление статистики баз завершено")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления статистики баз: {e}")
+            
+            if self._bot:
+                self._send_critical_notification(
+                    "Статистика баз",
+                    str(e)
+                )
     
     def _create_weekly_sheet_job(self):
         """Задача создания нового листа"""
@@ -217,7 +233,7 @@ class SchedulerService:
             return
         
         try:
-            # ===== ЗАДАЧА 1: Обновление статистики =====
+            # ===== ЗАДАЧА 1: Обновление статистики менеджеров =====
             self.scheduler.add_job(
                 func=self._update_stats_job,
                 trigger=CronTrigger(
@@ -227,12 +243,27 @@ class SchedulerService:
                     timezone=self.timezone
                 ),
                 id='update_stats',
-                name='Обновление статистики в Google Sheets',
+                name='Обновление статистики менеджеров',
                 replace_existing=True,
                 max_instances=1
             )
             
-            # ===== ЗАДАЧА 2: Создание нового листа =====
+            # ===== ЗАДАЧА 2: Обновление статистики баз ✅ НОВОЕ =====
+            self.scheduler.add_job(
+                func=self._update_base_stats_job,
+                trigger=CronTrigger(
+                    day_of_week='mon-sat',
+                    hour='8-19',
+                    minute=0,
+                    timezone=self.timezone
+                ),
+                id='update_base_stats',
+                name='Обновление статистики баз',
+                replace_existing=True,
+                max_instances=1
+            )
+            
+            # ===== ЗАДАЧА 3: Создание нового листа =====
             self.scheduler.add_job(
                 func=self._create_weekly_sheet_job,
                 trigger=CronTrigger(
@@ -247,7 +278,7 @@ class SchedulerService:
                 max_instances=1
             )
             
-            # ===== ЗАДАЧА 3: Сброс SIP =====
+            # ===== ЗАДАЧА 4: Сброс SIP =====
             self.scheduler.add_job(
                 func=self._reset_sips_job,
                 trigger=CronTrigger(
@@ -263,8 +294,11 @@ class SchedulerService:
             )
             
             self._jobs_added = True
-            logger.info("✅ Задачи добавлены в планировщик")
-            logger.info("✅ Задача сброса SIP добавлена (8:00, ПН-СБ)")
+            logger.info("✅ Все задачи добавлены в планировщик")
+            logger.info("   • Статистика менеджеров: каждый час (8:00-19:00, ПН-СБ)")
+            logger.info("   • Статистика баз: каждый час (8:00-19:00, ПН-СБ)")
+            logger.info("   • Создание листа: понедельник 00:01")
+            logger.info("   • Сброс SIP: 8:00 (ПН-СБ)")
         
             self._print_jobs_info()
             
@@ -295,10 +329,11 @@ class SchedulerService:
             if not self.scheduler.running:
                 self.scheduler.start()
                 logger.info("🚀 Планировщик задач запущен")
-                logger.info("📊 Статистика будет обновляться каждый час (8:00-19:00, ПН-СБ)")
-                logger.info("📋 Новый лист будет создаваться каждый понедельник в 00:01")
-                logger.info("🔄 SIP будут сбрасываться каждое утро в 8:00 (ПН-СБ)")
-                logger.info("📨 Критические ошибки будут отправляться админам")
+                logger.info("📊 Статистика менеджеров: каждый час (8:00-19:00, ПН-СБ)")
+                logger.info("📊 Статистика баз: каждый час (8:00-19:00, ПН-СБ)")
+                logger.info("📋 Новый лист: каждый понедельник в 00:01")
+                logger.info("🔄 SIP: сброс каждое утро в 8:00 (ПН-СБ)")
+                logger.info("📨 Критические ошибки → админам")
             else:
                 logger.warning("⚠️ Планировщик уже запущен")
             
@@ -325,6 +360,13 @@ class SchedulerService:
         """Запустить обновление статистики прямо сейчас (для тестирования)"""
         logger.info("🔄 Ручной запуск обновления статистики")
         self._update_stats_job()
+    
+    def run_base_stats_now(self):
+        """
+        ✅ НОВОЕ: Запустить обновление статистики баз прямо сейчас
+        """
+        logger.info("🔄 Ручной запуск обновления статистики баз")
+        self._update_base_stats_job()
     
     def get_stats(self) -> dict:
         """Получить статистику работы планировщика"""
