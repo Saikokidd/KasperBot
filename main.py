@@ -80,6 +80,41 @@ async def fallback_callback(update, context):
         await query.answer("⚠️ Эта кнопка больше не активна", show_alert=False)
 
 
+async def rate_limit_middleware(update, context):
+    """
+    Middleware для защиты от спама
+    
+    ✅ ДОБАВЛЕНО: Rate limiting для сообщений и callback'ов
+    """
+    from utils.rate_limiter import rate_limiter
+    
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Проверка для сообщений
+    if update.message:
+        allowed, msg = rate_limiter.check_message_rate(user_id)
+        if not allowed:
+            logger.warning(f"⚠️ Rate limit: сообщение от {user_id}")
+            await update.message.reply_text(msg)
+            return False  # Блокируем обработчик
+    
+    # Проверка для callback'ов
+    elif update.callback_query:
+        allowed, msg = rate_limiter.check_callback_rate(user_id)
+        if not allowed:
+            logger.warning(f"⚠️ Rate limit: callback от {user_id}")
+            try:
+                await update.callback_query.answer(msg, show_alert=True)
+            except:
+                pass
+            return False  # Блокируем обработчик
+    
+    return True  # Разрешаем обработчик
+
+
 def register_handlers(app: Application):
     """Регистрация всех обработчиков"""
     logger.info("🔧 Начало регистрации обработчиков...")

@@ -2,11 +2,11 @@
 services/base_stats_service.py
 Сервис для автоматизации таблицы "Статистика баз"
 
-ФУНКЦИОНАЛ:
-✅ Парсинг данных поставщиков из рабочей таблицы
-✅ Подсчёт трубок и перезвонов по каждому поставщику
-✅ Автоматическое заполнение недельных листов
-✅ Форматирование и раскраска ячеек
+СТРУКТУРА ТАБЛИЦЫ (как на скрине):
+✅ Дата в первой колонке (объединённая ячейка)
+✅ Строки поставщиков под датой
+✅ Итоговая строка (голубая) после каждой даты
+✅ Автозаполнение: Дата, Поставщик, Кол-во, Перезвоны
 """
 
 import re
@@ -30,81 +30,12 @@ import logging
 load_dotenv()
 
 # ===== КОНСТАНТЫ =====
-
-# Retry для Google Sheets API
 API_RETRY_CONFIG = {
     'stop': stop_after_attempt(3),
     'wait': wait_exponential(min=2, max=10),
     'retry': retry_if_exception_type((APIError,)),
     'before_sleep': before_sleep_log(logger, logging.WARNING)
 }
-
-
-class ProviderInfo:
-    """Класс для хранения информации о поставщике"""
-    
-    def __init__(self, raw_text: str):
-        self.raw_text = raw_text
-        self.date: Optional[str] = None          # "15.12"
-        self.quantity: Optional[int] = None      # 1000, 3000, 500
-        self.provider_text: Optional[str] = None # ВСЁ после даты (нормализованное)
-        
-        self._parse()
-    
-    def _parse(self):
-        """
-        Парсит строку поставщика
-        
-        ✅ ИСПРАВЛЕНО: Дата может быть в начале или в конце!
-        
-        Примеры:
-        "15.12 тест" → дата="15.12", кол=None, текст="тест"
-        "1к Микс регионов_XX_15.12" → дата="15.12", кол=1000, текст="1к Микс регионов_XX"
-        "15.12 3к_МСК_helphub-3" → дата="15.12", кол=3000, текст="3к_МСК_helphub-3"
-        """
-        text = self.raw_text.strip()
-        
-        if not text:
-            return
-        
-        # ===== ШАГ 1: Извлечь дату (может быть в начале ИЛИ в конце!) =====
-        date_matches = list(re.finditer(r'(\d{1,2}\.\d{1,2})', text))
-        
-        if date_matches:
-            # Берём первую найденную дату
-            date_match = date_matches[0]
-            self.date = date_match.group(1)
-            
-            # Удаляем дату из текста
-            text = text.replace(date_match.group(0), '').strip()
-            
-            # Удаляем лишние пробелы/подчёркивания в начале/конце
-            text = text.strip('_ ')
-        
-        # ===== ШАГ 2: Извлечь количество =====
-        # Паттерны: 1к, 3к, 0.5к, 1.5к (с пробелом или без)
-        quantity_match = re.search(r'(\d+\.?\d*)\s*к', text, re.IGNORECASE)
-        if quantity_match:
-            quantity_str = quantity_match.group(1)
-            self.quantity = int(float(quantity_str) * 1000)
-        
-        # ===== ШАГ 3: Нормализовать текст поставщика =====
-        # Убираем лишние пробелы, заменяем множественные на одинарные
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        self.provider_text = text if text else self.raw_text
-        
-        logger.debug(
-            f"Парсинг: '{self.raw_text}' → "
-            f"дата={self.date}, кол={self.quantity}, "
-            f"текст='{self.provider_text}'"
-        )
-    
-    def __str__(self):
-        return self.provider_text or self.raw_text
-    
-    def __repr__(self):
-        return f"ProviderInfo('{self.raw_text}')"
 
 
 class BaseStatsService:
@@ -114,11 +45,9 @@ class BaseStatsService:
         """Инициализация сервиса"""
         self.client = None
         self.spreadsheet = None
-        self.sheet_id = os.getenv("BASE_STATS_SHEET_ID")  # НОВАЯ переменная
+        self.sheet_id = os.getenv("BASE_STATS_SHEET_ID")
         self.credentials_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
         self.timezone = pytz.timezone('Europe/Kiev')
-        
-        # ID рабочей таблицы (откуда берём данные)
         self.source_sheet_id = os.getenv("GOOGLE_SHEETS_ID")
         
         if not self.sheet_id:
@@ -159,13 +88,12 @@ class BaseStatsService:
     
     def _get_week_range(self, date: datetime) -> Tuple[datetime, datetime]:
         """Получить диапазон текущей недели (ПН-СБ)"""
-        # Если воскресенье → следующий понедельник
         if date.weekday() == 6:
             start = date + timedelta(days=1)
         else:
             start = date - timedelta(days=date.weekday())
         
-        end = start + timedelta(days=5)  # Суббота
+        end = start + timedelta(days=5)
         return start, end
     
     def _get_week_title(self, start: datetime, end: datetime) -> str:
@@ -181,15 +109,7 @@ class BaseStatsService:
     
     @retry(**API_RETRY_CONFIG)
     async def _fetch_provider_data_for_date(self, date_str: str) -> List[Dict]:
-        """
-        Получить данные из рабочей таблицы за конкретную дату
-        
-        Args:
-            date_str: Дата в формате DD.MM (например "15.12")
-            
-        Returns:
-            Список строк с данными (включая колонку "Поставщик")
-        """
+        """Получить данные поставщиков за конкретную дату"""
         url = settings.GOOGLE_APPS_SCRIPT_URL
         
         if not url:
@@ -197,7 +117,7 @@ class BaseStatsService:
             raise ValueError("GOOGLE_APPS_SCRIPT_URL не настроен")
         
         params = {
-            'action': 'providers',  # Новый endpoint в Apps Script
+            'action': 'providers',
             'date': date_str
         }
         
@@ -231,30 +151,13 @@ class BaseStatsService:
             logger.error(f"❌ Ошибка получения данных: {e}")
             raise
     
-    async def _count_calls_by_provider(
-        self, 
-        date_str: str
-    ) -> Dict[str, Dict[str, int]]:
+    async def _count_calls_by_provider(self, date_str: str) -> Dict[str, Dict[str, int]]:
         """
         Подсчитать трубки и перезвоны по каждому поставщику за день
         
-        ✅ ИСПРАВЛЕНО: Группировка одинаковых поставщиков
-        
-        Args:
-            date_str: Дата в формате DD.MM
-            
         Returns:
             Словарь: {
-                "тест": {
-                    "calls": 20, 
-                    "recalls": 5,
-                    "rows": 0
-                },
-                "3к_МСК_helphub-3": {
-                    "calls": 18, 
-                    "recalls": 6,
-                    "rows": 3000
-                }
+                "3к_МСК_helphub": {"calls": 12, "recalls": 4}
             }
         """
         raw_data = await self._fetch_provider_data_for_date(date_str)
@@ -265,40 +168,26 @@ class BaseStatsService:
         stats = {}
         
         for row in raw_data:
-            # Получаем информацию о поставщике
-            provider_raw = row.get("поставщик", "").strip()
+            provider = row.get("поставщик", "").strip()
             
-            if not provider_raw:
+            if not provider:
                 continue
             
-            # Парсим информацию о поставщике
-            provider_info = ProviderInfo(provider_raw)
-            
-            # ✅ ИСПОЛЬЗУЕМ provider_text БЕЗ ИЗМЕНЕНИЙ
-            provider_key = provider_info.provider_text
-            
-            if not provider_key:
-                continue
-            
-            # ✅ ГРУППИРОВКА: Если поставщик уже есть - суммируем
-            if provider_key not in stats:
-                stats[provider_key] = {
+            if provider not in stats:
+                stats[provider] = {
                     "calls": 0,
-                    "recalls": 0,
-                    "rows": provider_info.quantity or 0  # Берём из ПЕРВОЙ строки
+                    "recalls": 0
                 }
             
-            # Считаем трубки (всегда +1)
-            stats[provider_key]["calls"] += 1
+            stats[provider]["calls"] += 1
             
-            # Считаем перезвоны (если цвет зелёный)
             color = row.get("цвет", "").strip().upper()
             if color == "ЗЕЛЕНЫЙ":
-                stats[provider_key]["recalls"] += 1
+                stats[provider]["recalls"] += 1
         
         logger.info(
             f"📊 Статистика за {date_str}: "
-            f"{len(stats)} уникальных поставщиков, "
+            f"{len(stats)} поставщиков, "
             f"{sum(s['calls'] for s in stats.values())} трубок"
         )
         
@@ -321,16 +210,14 @@ class BaseStatsService:
             except WorksheetNotFound:
                 pass
             
-            # Создаём лист
             worksheet = self.spreadsheet.add_worksheet(
                 title=title,
-                rows=100,
-                cols=20
+                rows=200,
+                cols=10
             )
             
             logger.info(f"✅ Создан новый лист: {title}")
             
-            # Применяем layout
             await self._setup_sheet_layout(worksheet, start, end)
             
             return worksheet
@@ -340,26 +227,26 @@ class BaseStatsService:
             return None
     
     async def _setup_sheet_layout(self, worksheet, start: datetime, end: datetime):
-        """Создать layout листа (как на скрине 1)"""
+        """Создать layout листа"""
         try:
             # ===== ШАПКА =====
             title = f"📊 СТАТИСТИКА БАЗ - {start.strftime('%d.%m')} - {end.strftime('%d.%m.%Y')}"
             
-            worksheet.merge_cells('A1:H1')
+            worksheet.merge_cells('A1:G1')
             worksheet.update('A1', [[title]])
             
             # ===== ЗАГОЛОВКИ =====
             headers = [[
-                "Дата", "Поставщик", "Строки", "Кол-во", "Бомж", 
+                "Дата", "Поставщик", "Кол-во", "Бомж", 
                 "перезвоны", "Пошло в работу", "Закрыто"
             ]]
-            worksheet.update('A2:H2', headers)
+            worksheet.update('A2:G2', headers)
             
             # ===== ФОРМАТИРОВАНИЕ =====
             sheet_id = worksheet.id
             
             # Шапка (синяя)
-            worksheet.format('A1:H1', {
+            worksheet.format('A1:G1', {
                 "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.7},
                 "textFormat": {
                     "foregroundColor": {"red": 1, "green": 1, "blue": 1},
@@ -369,9 +256,9 @@ class BaseStatsService:
                 "horizontalAlignment": "CENTER"
             })
             
-            # Заголовки (светло-голубые)
-            worksheet.format('A2:H2', {
-                "backgroundColor": {"red": 0.85, "green": 0.9, "blue": 1},
+            # Заголовки (светло-серые)
+            worksheet.format('A2:G2', {
+                "backgroundColor": {"red": 0.85, "green": 0.85, "blue": 0.85},
                 "textFormat": {"bold": True, "fontSize": 10},
                 "horizontalAlignment": "CENTER"
             })
@@ -379,10 +266,9 @@ class BaseStatsService:
             # Ширина колонок
             body = {
                 "requests": [
-                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 90}, "fields": "pixelSize"}},   # Дата
-                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 200}, "fields": "pixelSize"}},  # Поставщик
-                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3}, "properties": {"pixelSize": 80}, "fields": "pixelSize"}},   # Строки
-                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 3, "endIndex": 8}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},  # Остальные
+                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 250}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 7}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
                 ]
             }
             self.spreadsheet.batch_update(body)
@@ -394,16 +280,13 @@ class BaseStatsService:
     
     @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
-        """
-        Главная функция обновления статистики
-        """
+        """Главная функция обновления статистики"""
         if not self.client or not self.spreadsheet:
             raise Exception("BaseStatsService не инициализирован")
         
         try:
             now = datetime.now(self.timezone)
             
-            # Пропускаем воскресенье
             if now.weekday() == 6:
                 logger.info("📅 Воскресенье - обновление пропущено")
                 return
@@ -422,13 +305,12 @@ class BaseStatsService:
                     raise Exception("Не удалось создать лист")
             
             # 2. Собираем данные за каждый день недели
-            all_stats = {}  # {date_str: {provider: {calls, recalls}}}
+            all_stats = {}
             
             current_date = start
             today = datetime.now(self.timezone).date()
             
             while current_date <= end:
-                # Пропускаем будущие дни
                 if current_date.date() > today:
                     current_date += timedelta(days=1)
                     continue
@@ -458,49 +340,205 @@ class BaseStatsService:
         all_stats: Dict[str, Dict[str, Dict[str, int]]],
         week_start: datetime
     ):
-        """Обновить данные на листе"""
-        updates = []
+        """
+        Обновить данные на листе
         
-        row = 3  # Начинаем с 3-й строки (после заголовков)
+        ✅ СТРУКТУРА КАК НА СКРИНЕ 2:
+        | Дата       | Поставщик      | Кол-во | Бомж | Перезвоны | Пошло | Закрыто |
+        | 15.12.2025 | 3к_МСК_helphub | 12     |      | 4         |       |         |
+        | 15.12.2025 | 1к_регл_Анон   | 16     |      | 9         | 6     |         |
+        |------------|----------------|--------|------|-----------|-------|---------|
+        | Дата       | Поставщик      | 45     | 0    | 16        | 7     |         | ← ИТОГО (голубая)
+        """
+        updates = []
+        merge_requests = []
+        format_requests = []
+        sheet_id = worksheet.id
+        
+        row = 3  # Начинаем с 3-й строки
         
         # Проходим по дням недели
         for day_offset in range(6):  # ПН-СБ
             current_date = week_start + timedelta(days=day_offset)
             date_str = current_date.strftime('%d.%m')
+            date_full = current_date.strftime('%d.%m.%Y')
             
             stats = all_stats.get(date_str, {})
             
             if not stats:
-                # Пустой день
                 continue
             
-            # Добавляем строку для каждого поставщика
+            first_row = row  # Запоминаем первую строку для объединения
+            
+            # ===== СТРОКИ ПОСТАВЩИКОВ =====
             for provider, data in sorted(stats.items()):
                 updates.append({
-                    'range': f'A{row}:H{row}',
+                    'range': f'A{row}:G{row}',
                     'values': [[
-                        date_str,
-                        provider,                # ✅ Полный текст БЕЗ ИЗМЕНЕНИЙ
-                        data.get('rows', 0),     # ✅ НОВОЕ: Количество строк
-                        data['calls'],           # Кол-во трубок
-                        "",                      # Бомж (заполняется вручную)
-                        data['recalls'],         # Перезвоны
-                        "",                      # Пошло в работу (вручную)
-                        ""                       # Закрыто (вручную)
+                        date_full,             # ✅ Дата полная (DD.MM.YYYY)
+                        provider,              # ✅ Поставщик
+                        data['calls'],         # ✅ Кол-во
+                        "",                    # Бомж (пусто)
+                        data['recalls'],       # ✅ Перезвоны
+                        "",                    # Пошло в работу (пусто)
+                        ""                     # Закрыто (пусто)
                     ]]
                 })
+                
+                # Форматирование строки поставщика
+                format_requests.extend([
+                    # Поставщик (фиолетовая)
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": row - 1,
+                                "endRowIndex": row,
+                                "startColumnIndex": 1,
+                                "endColumnIndex": 2
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.85, "green": 0.75, "blue": 0.9}
+                                }
+                            },
+                            "fields": "userEnteredFormat.backgroundColor"
+                        }
+                    },
+                    # Кол-во (желтая)
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": row - 1,
+                                "endRowIndex": row,
+                                "startColumnIndex": 2,
+                                "endColumnIndex": 3
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 1, "green": 1, "blue": 0.4},
+                                    "horizontalAlignment": "CENTER"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment)"
+                        }
+                    },
+                    # Перезвоны (зеленая)
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": row - 1,
+                                "endRowIndex": row,
+                                "startColumnIndex": 4,
+                                "endColumnIndex": 5
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.7, "green": 0.9, "blue": 0.7},
+                                    "horizontalAlignment": "CENTER"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment)"
+                        }
+                    }
+                ])
+                
                 row += 1
             
-            # Добавляем пустую строку между днями
-            row += 1
+            last_row = row - 1
+            
+            # ✅ ОБЪЕДИНЕНИЕ ЯЧЕЕК ДАТЫ (оранжевая колонка)
+            if last_row >= first_row:
+                merge_requests.append({
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": first_row - 1,
+                            "endRowIndex": last_row,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1
+                        },
+                        "mergeType": "MERGE_ALL"
+                    }
+                })
+                
+                # Форматирование даты (оранжевая)
+                format_requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": first_row - 1,
+                            "endRowIndex": last_row,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": {"red": 1, "green": 0.65, "blue": 0.3},
+                                "textFormat": {"bold": True},
+                                "horizontalAlignment": "CENTER",
+                                "verticalAlignment": "MIDDLE"
+                            }
+                        },
+                        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+                    }
+                })
+            
+            # ===== ИТОГОВАЯ СТРОКА (голубая) =====
+            total_calls = sum(s['calls'] for s in stats.values())
+            total_recalls = sum(s['recalls'] for s in stats.values())
+            
+            updates.append({
+                'range': f'A{row}:G{row}',
+                'values': [[
+                    "Дата",                # Текст "Дата"
+                    "Поставщик",           # Текст "Поставщик"
+                    total_calls,           # ✅ Сумма кол-во
+                    0,                     # Бомж (0)
+                    total_recalls,         # ✅ Сумма перезвонов
+                    "",                    # Пошло в работу
+                    ""                     # Закрыто
+                ]]
+            })
+            
+            # Форматирование итоговой строки (голубая)
+            format_requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 7
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.6, "green": 0.85, "blue": 0.9},
+                            "textFormat": {"bold": True},
+                            "horizontalAlignment": "CENTER"
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+                }
+            })
+            
+            row += 1  # Следующий день
         
-        # Отправляем все обновления
+        # Отправляем обновления
         if updates:
             logger.info(f"📤 Отправка {len(updates)} обновлений")
             worksheet.batch_update(updates, value_input_option='USER_ENTERED')
-            
-            # Применяем границы
-            await self._apply_borders(worksheet, row - 1)
+        
+        # Применяем объединение и форматирование
+        if merge_requests or format_requests:
+            body = {"requests": merge_requests + format_requests}
+            self.spreadsheet.batch_update(body)
+            logger.info("✅ Форматирование и объединение применены")
+        
+        # Границы
+        await self._apply_borders(worksheet, row - 1)
     
     async def _apply_borders(self, worksheet, last_row: int):
         """Применить границы к таблице"""
@@ -511,17 +549,17 @@ class BaseStatsService:
                 "updateBorders": {
                     "range": {
                         "sheetId": sheet_id,
-                        "startRowIndex": 1,  # Со 2-й строки (заголовки)
+                        "startRowIndex": 1,
                         "endRowIndex": last_row,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 8  # ✅ Изменено с 7 на 8
+                        "endColumnIndex": 7
                     },
-                    "top": {"style": "SOLID", "width": 2},
-                    "bottom": {"style": "SOLID", "width": 2},
-                    "left": {"style": "SOLID", "width": 2},
-                    "right": {"style": "SOLID", "width": 2},
-                    "innerHorizontal": {"style": "SOLID", "width": 1},
-                    "innerVertical": {"style": "SOLID", "width": 1}
+                    "top": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
+                    "bottom": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
+                    "left": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
+                    "right": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
+                    "innerHorizontal": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
+                    "innerVertical": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
                 }
             }]
             

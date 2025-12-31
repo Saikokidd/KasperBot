@@ -8,6 +8,7 @@ handlers/management.py - ЧИСТЫЙ UX
 ✅ Пользователь сразу видит результат и может продолжить
 ✅ ДОБАВЛЕНО: Упрощённое управление быстрыми ошибками
 ✅ ИСПРАВЛЕНО: Флаги для предотвращения алертов "Неизвестная команда"
+✅ ДОБАВЛЕНО: Input Validation всех входных данных
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -17,6 +18,7 @@ from services.user_service import user_service
 from keyboards.inline import get_management_menu, get_telephony_type_keyboard
 from utils.state import clear_all_states
 from utils.logger import logger
+from utils.validators import input_validator
 from database.models import db
 
 
@@ -124,8 +126,10 @@ async def add_manager_process(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Неверный формат ID!\n\nID должен быть числом.")
             return WAITING_MANAGER_ID
     
-    if not user_id or user_id <= 0:
-        await update.message.reply_text("❌ Неверный ID пользователя!")
+    # ✅ ДОБАВЛЕНО: Валидация user_id с использованием InputValidator
+    is_valid, error_msg = input_validator.validate_user_id(user_id)
+    if not is_valid:
+        await update.message.reply_text(error_msg)
         return WAITING_MANAGER_ID
     
     success, message = management_service.add_manager(
@@ -239,6 +243,13 @@ async def add_telephony_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_telephony_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка названия"""
     name = update.message.text.strip()
+    
+    # ✅ ДОБАВЛЕНО: Валидация названия телефонии
+    is_valid, error_msg = input_validator.validate_telephony_name(name)
+    if not is_valid:
+        await update.message.reply_text(error_msg)
+        return WAITING_TEL_NAME
+    
     context.user_data['tel_name'] = name
     
     await update.message.reply_text(
@@ -255,10 +266,10 @@ async def add_telephony_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Обработка кода"""
     code = update.message.text.strip().lower()
     
-    if not code.isalnum():
-        await update.message.reply_text(
-            "❌ Код должен содержать только латинские буквы и цифры!\nПопробуйте снова:"
-        )
+    # ✅ ДОБАВЛЕНО: Валидация кода телефонии
+    is_valid, error_msg = input_validator.validate_telephony_code(code)
+    if not is_valid:
+        await update.message.reply_text(error_msg)
         return WAITING_TEL_CODE
     
     context.user_data['tel_code'] = code
@@ -347,6 +358,12 @@ async def remove_telephony_process(update: Update, context: ContextTypes.DEFAULT
     """Обработка удаления"""
     code = update.message.text.strip().lower()
     
+    # ✅ ДОБАВЛЕНО: Валидация кода телефонии
+    is_valid, error_msg = input_validator.validate_telephony_code(code)
+    if not is_valid:
+        await update.message.reply_text(error_msg)
+        return WAITING_TEL_CODE_REMOVE
+    
     success, message = management_service.remove_telephony(code)
     
     keyboard = InlineKeyboardMarkup([
@@ -383,6 +400,14 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка сообщения для рассылки"""
+    message_text = update.message.text.strip()
+    
+    # ✅ ДОБАВЛЕНО: Валидация сообщения рассылки
+    is_valid, error_msg = input_validator.validate_broadcast_message(message_text)
+    if not is_valid:
+        await update.message.reply_text(error_msg)
+        return WAITING_BROADCAST_MESSAGE
+    
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Да, отправить", callback_data="broadcast_confirm"),
@@ -392,6 +417,7 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['broadcast_message_id'] = update.message.message_id
     context.user_data['broadcast_chat_id'] = update.message.chat_id
+    context.user_data['broadcast_message_text'] = message_text
     
     await update.message.reply_text(
         "📨 Подтвердите отправку рассылки всем менеджерам:",

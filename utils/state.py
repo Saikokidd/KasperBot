@@ -6,11 +6,17 @@ utils/state.py - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ
 ✅ clear_all_states() НЕ трогает роль
 ✅ Роль живёт весь сеанс (с момента /start)
 ✅ Только телефония и режимы очищаются
+✅ ДОБАВЛЕНО: Timeout для быстрых ошибок (SIP)
 """
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from telegram.ext import ContextTypes
 from config.constants import TEL_CHOICE_TIMEOUT
+from utils.logger import logger
+
+# Константы для timeout'ов
+QUICK_ERROR_SIP_TIMEOUT_MINUTES = 10
+QUICK_ERROR_CODE_TIMEOUT_MINUTES = 10
 
 
 def is_tel_choice_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -38,6 +44,8 @@ def clear_all_states(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("support_mode", None)
     # ✅ КРИТИЧНО: role НЕ очищается!
     # Роль устанавливается при /start и живёт весь сеанс
+    # ✅ НОВОЕ: Очищаем timeout'ы для быстрых ошибок
+    clear_quick_error_state(context)
 
 
 def get_user_role(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -116,3 +124,130 @@ def get_tel_choice(context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[str], O
     tel = context.user_data.get("chosen_tel")
     tel_code = context.user_data.get("chosen_tel_code")
     return tel, tel_code
+
+
+# ✅ НОВОЕ: Управление состоянием быстрых ошибок
+
+def set_quick_error_sip(context: ContextTypes.DEFAULT_TYPE, sip: str) -> None:
+    """
+    Сохраняет SIP номер для быстрой ошибки с timestamp
+    
+    Args:
+        sip: SIP номер
+    """
+    if not sip or not sip.strip():
+        raise ValueError("SIP не может быть пустым")
+    
+    context.user_data["quick_error_sip"] = sip.strip()
+    context.user_data["quick_error_sip_set_at"] = datetime.now()
+    logger.debug(f"💾 SIP для быстрой ошибки сохранён: {sip}")
+
+
+def get_quick_error_sip(context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+    """
+    Получает SIP номер, если он ещё не истёк по времени
+    
+    Returns:
+        SIP номер или None если истёк timeout
+    """
+    sip = context.user_data.get("quick_error_sip")
+    sip_set_at = context.user_data.get("quick_error_sip_set_at")
+    
+    if not sip or not sip_set_at:
+        return None
+    
+    # Проверяем timeout
+    if is_quick_error_sip_expired(context):
+        logger.warning("⚠️ Timeout SIP быстрой ошибки истёк, очищаем")
+        clear_quick_error_state(context)
+        return None
+    
+    return sip
+
+
+def is_quick_error_sip_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Проверяет, истёк ли timeout для SIP быстрой ошибки
+    
+    Returns:
+        True если истёк, False если ещё актуален
+    """
+    sip_set_at = context.user_data.get("quick_error_sip_set_at")
+    
+    if not sip_set_at:
+        return True
+    
+    elapsed = datetime.now() - sip_set_at
+    expired = elapsed > timedelta(minutes=QUICK_ERROR_SIP_TIMEOUT_MINUTES)
+    
+    if expired:
+        logger.debug(f"⏰ SIP timeout истёк ({QUICK_ERROR_SIP_TIMEOUT_MINUTES} минут)")
+    
+    return expired
+
+
+def set_quick_error_code(context: ContextTypes.DEFAULT_TYPE, code: str) -> None:
+    """
+    Сохраняет код быстрой ошибки с timestamp
+    
+    Args:
+        code: Код ошибки (1-10 или "custom")
+    """
+    if not code or not code.strip():
+        raise ValueError("Код ошибки не может быть пустым")
+    
+    context.user_data["quick_error_code"] = code.strip()
+    context.user_data["quick_error_code_set_at"] = datetime.now()
+    logger.debug(f"💾 Код быстрой ошибки сохранён: {code}")
+
+
+def get_quick_error_code(context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+    """
+    Получает код быстрой ошибки, если он ещё не истёк по времени
+    
+    Returns:
+        Код ошибки или None если истёк timeout
+    """
+    code = context.user_data.get("quick_error_code")
+    code_set_at = context.user_data.get("quick_error_code_set_at")
+    
+    if not code or not code_set_at:
+        return None
+    
+    # Проверяем timeout
+    if is_quick_error_code_expired(context):
+        logger.warning("⚠️ Timeout кода быстрой ошибки истёк, очищаем")
+        clear_quick_error_state(context)
+        return None
+    
+    return code
+
+
+def is_quick_error_code_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Проверяет, истёк ли timeout для кода быстрой ошибки
+    
+    Returns:
+        True если истёк, False если ещё актуален
+    """
+    code_set_at = context.user_data.get("quick_error_code_set_at")
+    
+    if not code_set_at:
+        return True
+    
+    elapsed = datetime.now() - code_set_at
+    expired = elapsed > timedelta(minutes=QUICK_ERROR_CODE_TIMEOUT_MINUTES)
+    
+    if expired:
+        logger.debug(f"⏰ Код быстрой ошибки timeout истёк ({QUICK_ERROR_CODE_TIMEOUT_MINUTES} минут)")
+    
+    return expired
+
+
+def clear_quick_error_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Полностью очищает состояние быстрой ошибки"""
+    context.user_data.pop("quick_error_sip", None)
+    context.user_data.pop("quick_error_sip_set_at", None)
+    context.user_data.pop("quick_error_code", None)
+    context.user_data.pop("quick_error_code_set_at", None)
+    logger.debug("🧹 Состояние быстрой ошибки очищено")
