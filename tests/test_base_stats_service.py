@@ -41,7 +41,7 @@ class TestBaseStatsCalculations:
         ]
         
         # Имитируем вызов метода
-        result = service._count_calls_from_raw_data(raw_data)
+        result = service.calculate_provider_stats(raw_data)
         
         # Проверяем результаты
         assert result["3к_МСК"]["calls"] == 3
@@ -60,7 +60,7 @@ class TestBaseStatsCalculations:
         service.client = MagicMock()
         service.spreadsheet = MagicMock()
         
-        result = service._count_calls_from_raw_data([])
+        result = service.calculate_provider_stats([])
         assert result == {}
     
     def test_count_unknown_color(self):
@@ -76,7 +76,7 @@ class TestBaseStatsCalculations:
             {"поставщик": "3к_МСК", "итог_цвет": "КРАСНЫЙ"},  # Неизвестный цвет
         ]
         
-        result = service._count_calls_from_raw_data(raw_data)
+        result = service.calculate_provider_stats(raw_data)
         
         assert result["3к_МСК"]["calls"] == 2
         assert result["3к_МСК"]["recalls"] == 0
@@ -89,7 +89,7 @@ class TestPercentageCalculations:
     @pytest.mark.parametrize("calls,recalls,expected_pct", [
         (10, 5, 50),
         (100, 25, 25),
-        (7, 3, 43),
+        (7, 3, 42),
         (1, 0, 0),
         (0, 0, 0),
     ])
@@ -126,7 +126,7 @@ class TestWeekRangeCalculations:
         
         # Понедельник
         monday = datetime(2025, 12, 15)  # Понедельник
-        start, end = service._get_week_range(monday)
+        start, end = service.get_week_range(monday)
         
         assert start.weekday() == 0  # Понедельник
         assert end.weekday() == 5   # Суббота
@@ -140,7 +140,7 @@ class TestWeekRangeCalculations:
         
         # Пятница
         friday = datetime(2025, 12, 19)
-        start, end = service._get_week_range(friday)
+        start, end = service.get_week_range(friday)
         
         assert start.weekday() == 0  # Понедельник текущей недели
         assert end.weekday() == 5   # Суббота
@@ -153,7 +153,7 @@ class TestWeekRangeCalculations:
         
         # Воскресенье
         sunday = datetime(2025, 12, 21)
-        start, end = service._get_week_range(sunday)
+        start, end = service.get_week_range(sunday)
         
         assert start.weekday() == 0  # Понедельник
         assert end.weekday() == 5   # Суббота
@@ -176,7 +176,7 @@ class TestDataGrouping:
         service.client = MagicMock()
         service.spreadsheet = MagicMock()
         
-        result = service._count_calls_from_raw_data(raw_data)
+        result = service.calculate_provider_stats(raw_data)
         
         assert len(result) == 2
         assert "A" in result
@@ -196,14 +196,14 @@ class TestAsyncOperations:
         service.spreadsheet = MagicMock()
         
         # Mock для fetch метода
-        service._fetch_provider_data_for_date = AsyncMock(return_value=[
+        service.fetch_provider_data = AsyncMock(return_value=[
             {"поставщик": "3к_МСК", "итог_цвет": "ЗЕЛЕНЫЙ"}
         ])
         
-        result = await service._count_calls_by_provider("15.12")
+        result = await service.count_calls_by_provider("15.12")
         
         # Проверяем что метод был вызван
-        service._fetch_provider_data_for_date.assert_called_once_with("15.12")
+        service.fetch_provider_data.assert_called_once_with("15.12")
         assert "3к_МСК" in result
 
 

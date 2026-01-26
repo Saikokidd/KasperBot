@@ -25,7 +25,7 @@
    - `google_sheets_fallback.py` ⭐ - **USE THIS** (wraps API with graceful cache fallback)
    - `google_sheets_service.py` - Direct API calls (never call directly)
    - `google_sheets_cache.py` - Disk cache for resilience
-   - `base_stats_service.py`, `managers_stats_service.py` - Sheet automation
+   - `base_stats_service.py` (NEW: BaseStatsConfig, BaseStatsDataCollector, BaseStatsSheetManager, BaseStatsFormatter), `managers_stats_service.py` - Sheet automation
    - `quick_error_service.py`, `broadcast_service.py` - Business operations
    - `analytics_service.py`, `stats_service.py` - Data aggregation
    - `user_service.py`, `scheduler_service.py` - Utilities
@@ -196,6 +196,23 @@ logger.info("✅ Success message")              # Green checkmark
 logger.debug("📞 Detailed trace")              # Phone emoji for tracing
 ```
 
+### Database Migrations
+- **Pattern**: Scripts in `scripts/` named `migrate_*.py` or `add_*.py`
+- **Execution**: Run manually after deployment: `python scripts/migrate_telephonies.py`
+- **Safety**: Always backup first with `backup_bot_db.sh`
+- **Logging**: Migrations log changes to bot.log
+
+### Telephony Integration
+- **BMW/Zvonari**: Two main telephony services with separate Telegram groups
+- **Quick Errors**: White-listed telephonies support fast error dispatch (SIP → error code)
+- **Group Mapping**: `settings.get_telephony_groups()` returns group_id by name
+- **Validation**: All telephony codes lowercase, unique in DB
+
+### Timezone & Scheduling
+- **Timezone**: Europe/Kiev (UTC+2) for all timestamps and cron jobs
+- **Daily Updates**: 6:00 AM Kiev time for stats synchronization
+- **Timeouts**: 10-minute SIP/code expiration in quick error flows
+
 ### Callback Data Patterns (in fallback_callback)
 ```python
 known_patterns = [
@@ -222,47 +239,36 @@ return ConversationHandler.END
 
 ---
 
-## Testing
+## Developer Workflows
 
-### Framework & Structure
-- **pytest** with fixtures in [tests/conftest.py](tests/conftest.py)
-- **Run**: `pytest tests/ -v`
+### Running & Debugging
+- **Local Development**: `python main.py` (requires `.env` with BOT_TOKEN, etc.)
+- **Background Mode**: `./scripts/start_background.sh` (creates venv, installs deps, runs with nohup)
+- **Production Restart**: `./scripts/restart.sh` (systemctl restart error_bot)
+- **Logs**: `tail -f output.log` or `tail -f bot.log` (rotating 10MB×5 files)
+- **Debug Mode**: Set `DEBUG=1` in .env for verbose logging
+
+### Testing
+- **Run All Tests**: `pytest tests/ -v`
+- **Coverage Report**: `pytest --cov=config --cov=utils --cov-report=html`
 - **Config**: [pytest.ini](pytest.ini) with markers (unit, validators, state, integration)
-- **Coverage**: 54+ unit tests (all passing)
+- **Fixtures**: Mock telegram updates/contexts in [tests/conftest.py](tests/conftest.py)
 
-### Mock Fixtures
-```python
-@pytest.fixture
-def mock_context():
-    """Mock telegram.ext.ContextTypes"""
-    context = MagicMock()
-    context.user_data = {}  # User session storage
-    return context
+### Database Operations
+- **Backup**: `./scripts/backup_bot_db.sh` (creates timestamped backup)
+- **Migrations**: Run numbered scripts in `scripts/` for schema updates
+  - `add_db_indexes.py` - performance indexes
+  - `migrate_telephonies.py` - telephony table changes
+  - `create_quick_error_telephonies_table.py` - quick errors support
+- **Manual Updates**: 
+  - `./scripts/update_base_stats_now.py` - immediate stats sync
+  - `./scripts/update_sheets_now.py` - Google Sheets update
 
-@pytest.fixture
-def mock_update():
-    """Mock telegram Update"""
-    update = MagicMock()
-    update.effective_user.id = 123456789
-    update.effective_user.username = "test_user"
-    return update
-```
-
-### Example Test
-```python
-def test_validate_user_id():
-    from config.validators import InputValidator
-    
-    # Valid cases
-    is_valid, error = InputValidator.validate_user_id("123456789")
-    assert is_valid == True
-    assert error is None
-    
-    # Invalid cases
-    is_valid, error = InputValidator.validate_user_id("-5")
-    assert is_valid == False
-    assert "positive" in error.lower()
-```
+### Background Tasks
+- **Scheduler**: APScheduler runs daily at 6:00 Kiev time for stats updates
+- **Google Sheets Sync**: Auto-updates manager stats via webhook
+- **Health Checks**: Built-in `/health` endpoint for monitoring
+- **Notifications**: Admin alerts for critical errors/failures
 
 ---
 
@@ -555,4 +561,4 @@ if not allowed:
 
 ---
 
-*Last updated: January 1, 2026 | Quality: 8.5/10 | Test Coverage: 20%+ | Status: Ready for AI agents*
+*Last updated: January 14, 2026 | Quality: 8.5/10 | Test Coverage: 20%+ | Status: Ready for AI agents*
