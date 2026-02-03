@@ -13,12 +13,12 @@ jobs:
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-            echo "Secrets TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID are not set. Please add them in repository secrets.";
+            echo "Секреты TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы. Добавьте их в секреты репозитория.";
             exit 1;
           fi
-          MESSAGE="✅ Test notification from KasperBot: Telegram setup OK."
+          MESSAGE="✅ Тестовое уведомление от KasperBot: Telegram настроен."
           curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"$CHAT_ID\", \"text\": \"$MESSAGE\", \"parse_mode\": \"HTML\"}" | jq .
 
       - name: Done
-        run: echo "If the message was delivered, Telegram notifications are configured correctly."
+        run: echo "Если сообщение доставлено, уведомления Telegram настроены корректно."
