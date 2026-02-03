@@ -94,8 +94,12 @@ jobs:
   # ──────────────────────────────────────────
   deploy_check:
     runs-on: ubuntu-latest
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
     # Проверяем доступ только если секреты заданы
-    if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
+    if: ${{ env.VPS_HOST != '' && env.VPS_USER != '' && env.VPS_SSH_KEY != '' }}
     needs: [lint, test]
 
     steps:
@@ -151,8 +155,12 @@ jobs:
   # JOB 3B: Деплой — выполнится только после проверки подключения
   # ──────────────────────────────────────────
   deploy:
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
     # Пропустим деплой, если не заданы переменные для доступа к VPS
-    if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
+    if: ${{ env.VPS_HOST != '' && env.VPS_USER != '' && env.VPS_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     # Деплой идёт ТОЛЬКО если предыдущие job'ы пройдены и проверка подключения успешна
     needs: [lint, test, deploy_check]
