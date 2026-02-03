@@ -16,7 +16,6 @@ services/base_stats_service.py
 ✅ Graceful error handling
 """
 
-import re
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any
@@ -25,7 +24,13 @@ from dotenv import load_dotenv
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 from gspread.exceptions import WorksheetNotFound, APIError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 import logging
 import aiohttp
 
@@ -36,10 +41,10 @@ load_dotenv()
 
 # ===== КОНСТАНТЫ =====
 API_RETRY_CONFIG = {
-    'stop': stop_after_attempt(3),
-    'wait': wait_exponential(min=2, max=10),
-    'retry': retry_if_exception_type((APIError,)),
-    'before_sleep': before_sleep_log(logger, logging.WARNING)
+    "stop": stop_after_attempt(3),
+    "wait": wait_exponential(min=2, max=10),
+    "retry": retry_if_exception_type((APIError,)),
+    "before_sleep": before_sleep_log(logger, logging.WARNING),
 }
 
 
@@ -48,40 +53,53 @@ class BaseStatsConfig:
 
     # Цвета фона (RGB значения для Google Sheets)
     COLORS = {
-        'header_bg': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # Серый для заголовков
-        'date_bg': {'red': 1, 'green': 0.65, 'blue': 0.3},     # Оранжевый для дат
-        'provider_bg': {'red': 0.9, 'green': 0.8, 'blue': 1.0}, # Фиолетовый для поставщиков
-        'calls_bg': {'red': 1, 'green': 1, 'blue': 0.4},       # Жёлтый для количества
-        'bomzh_bg': {'red': 1, 'green': 0.75, 'blue': 0.8},    # Розовый для бомжей
-        'recalls_bg': {'red': 0.7, 'green': 0.95, 'blue': 0.7}, # Зелёный для перезвонов
-        'manual_bg': {'red': 1, 'green': 0.8, 'blue': 1.0},     # Фиолетовый для ручных полей
-        'day_total_bg': {'red': 0.5, 'green': 0.8, 'blue': 1.0}, # Голубой для итогов дня
-        'week_total_bg': {'red': 0.2, 'green': 0.5, 'blue': 0.8}, # Тёмно-голубой для итогов недели
-        'percent_bg': {'red': 0.95, 'green': 0.95, 'blue': 0.95} # Серый для процентов
+        "header_bg": {"red": 0.9, "green": 0.9, "blue": 0.9},  # Серый для заголовков
+        "date_bg": {"red": 1, "green": 0.65, "blue": 0.3},  # Оранжевый для дат
+        "provider_bg": {
+            "red": 0.9,
+            "green": 0.8,
+            "blue": 1.0,
+        },  # Фиолетовый для поставщиков
+        "calls_bg": {"red": 1, "green": 1, "blue": 0.4},  # Жёлтый для количества
+        "bomzh_bg": {"red": 1, "green": 0.75, "blue": 0.8},  # Розовый для бомжей
+        "recalls_bg": {
+            "red": 0.7,
+            "green": 0.95,
+            "blue": 0.7,
+        },  # Зелёный для перезвонов
+        "manual_bg": {
+            "red": 1,
+            "green": 0.8,
+            "blue": 1.0,
+        },  # Фиолетовый для ручных полей
+        "day_total_bg": {
+            "red": 0.5,
+            "green": 0.8,
+            "blue": 1.0,
+        },  # Голубой для итогов дня
+        "week_total_bg": {
+            "red": 0.2,
+            "green": 0.5,
+            "blue": 0.8,
+        },  # Тёмно-голубой для итогов недели
+        "percent_bg": {"red": 0.95, "green": 0.95, "blue": 0.95},  # Серый для процентов
     }
 
     # Структура колонок
     COLUMNS = [
-        {'name': 'Дата', 'width': 100},
-        {'name': 'Поставщик', 'width': 250},
-        {'name': 'Кол-во', 'width': 120},
-        {'name': 'Бомж', 'width': 120},
-        {'name': 'Перезвоны', 'width': 120},
-        {'name': 'Пошло в работу', 'width': 120},
-        {'name': 'Закрыто', 'width': 120}
+        {"name": "Дата", "width": 100},
+        {"name": "Поставщик", "width": 250},
+        {"name": "Кол-во", "width": 120},
+        {"name": "Бомж", "width": 120},
+        {"name": "Перезвоны", "width": 120},
+        {"name": "Пошло в работу", "width": 120},
+        {"name": "Закрыто", "width": 120},
     ]
 
     # Форматирование текста (всегда чёрный)
-    TEXT_FORMAT = {
-        "foregroundColor": {"red": 0, "green": 0, "blue": 0},
-        "fontSize": 11
-    }
+    TEXT_FORMAT = {"foregroundColor": {"red": 0, "green": 0, "blue": 0}, "fontSize": 11}
 
-    HEADER_FORMAT = {
-        **TEXT_FORMAT,
-        "bold": True,
-        "fontSize": 12
-    }
+    HEADER_FORMAT = {**TEXT_FORMAT, "bold": True, "fontSize": 12}
 
 
 class BaseStatsDataCollector:
@@ -95,27 +113,31 @@ class BaseStatsDataCollector:
     @retry(**API_RETRY_CONFIG)
     async def fetch_provider_data(self, date_str: str) -> List[Dict]:
         """Получить данные поставщиков за дату"""
-        params = {'action': 'providers', 'date': date_str}
+        params = {"action": "providers", "date": date_str}
 
         logger.debug(f"🔗 Запрос данных поставщиков за {date_str}")
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as session:
             async with session.get(self.url, params=params) as response:
                 if response.status != 200:
                     raise Exception(f"HTTP {response.status}")
 
                 data = await response.json()
 
-                if isinstance(data, dict) and 'error' in data:
-                    if "не найден" in data['error']:
+                if isinstance(data, dict) and "error" in data:
+                    if "не найден" in data["error"]:
                         logger.debug(f"📭 Лист {date_str} не найден")
                         return []
-                    raise Exception(data['error'])
+                    raise Exception(data["error"])
 
                 if not isinstance(data, list):
                     raise ValueError("Apps Script вернул не список")
 
-                logger.debug(f"✅ Получено {len(data)} записей поставщиков за {date_str}")
+                logger.debug(
+                    f"✅ Получено {len(data)} записей поставщиков за {date_str}"
+                )
                 return data
 
     @staticmethod
@@ -145,9 +167,9 @@ class BaseStatsDataCollector:
 
         # Логируем результаты
         if stats:
-            total_calls = sum(s['calls'] for s in stats.values())
-            total_bomzh = sum(s['bomzh'] for s in stats.values())
-            total_recalls = sum(s['recalls'] for s in stats.values())
+            total_calls = sum(s["calls"] for s in stats.values())
+            total_bomzh = sum(s["bomzh"] for s in stats.values())
+            total_recalls = sum(s["recalls"] for s in stats.values())
 
             logger.info(
                 f"📊 Статистика поставщиков: {len(stats)} поставщиков, "
@@ -176,8 +198,18 @@ class BaseStatsSheetManager:
     def _get_week_title(self, start: datetime, end: datetime) -> str:
         """Создать название листа недели"""
         months = {
-            1: "Января", 2: "Февраля", 3: "Марта", 4: "Апреля", 5: "Мая", 6: "Июня",
-            7: "Июля", 8: "Августа", 9: "Сентября", 10: "Октября", 11: "Ноября", 12: "Декабря"
+            1: "Января",
+            2: "Февраля",
+            3: "Марта",
+            4: "Апреля",
+            5: "Мая",
+            6: "Июня",
+            7: "Июля",
+            8: "Августа",
+            9: "Сентября",
+            10: "Октября",
+            11: "Ноября",
+            12: "Декабря",
         }
         month_name = months[start.month]
         return f"Неделя {start.day}-{end.day} {month_name} {start.year}"
@@ -214,44 +246,58 @@ class BaseStatsSheetManager:
 
         # Заголовок
         title = f"📊 СТАТИСТИКА БАЗ ПАВЛОГРАД - {start.strftime('%d.%m')} - {end.strftime('%d.%m.%Y')}"
-        worksheet.merge_cells('A1:H1')
-        worksheet.update('A1', [[title]])
+        worksheet.merge_cells("A1:H1")
+        worksheet.update("A1", [[title]])
 
         # Заголовки колонок
-        headers = [[col['name'] for col in config.COLUMNS]]
-        worksheet.update('A2:H2', headers)
+        headers = [[col["name"] for col in config.COLUMNS]]
+        worksheet.update("A2:H2", headers)
 
         # Форматирование заголовка
-        worksheet.format('A1:H1', {
-            "backgroundColor": config.COLORS['header_bg'],
-            "textFormat": config.HEADER_FORMAT,
-            "horizontalAlignment": "CENTER",
-            "verticalAlignment": "MIDDLE"
-        })
+        worksheet.format(
+            "A1:H1",
+            {
+                "backgroundColor": config.COLORS["header_bg"],
+                "textFormat": config.HEADER_FORMAT,
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+            },
+        )
 
         # Форматирование заголовков колонок
-        worksheet.format('A2:H2', {
-            "backgroundColor": config.COLORS['header_bg'],
-            "textFormat": config.HEADER_FORMAT,
-            "horizontalAlignment": "CENTER",
-            "verticalAlignment": "MIDDLE",
-            "borders": {
-                "top": {"style": "SOLID", "width": 2},
-                "bottom": {"style": "SOLID", "width": 2},
-                "left": {"style": "SOLID", "width": 1},
-                "right": {"style": "SOLID", "width": 1}
-            }
-        })
+        worksheet.format(
+            "A2:H2",
+            {
+                "backgroundColor": config.COLORS["header_bg"],
+                "textFormat": config.HEADER_FORMAT,
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+                "borders": {
+                    "top": {"style": "SOLID", "width": 2},
+                    "bottom": {"style": "SOLID", "width": 2},
+                    "left": {"style": "SOLID", "width": 1},
+                    "right": {"style": "SOLID", "width": 1},
+                },
+            },
+        )
 
         # Ширина колонок
         sheet_id = worksheet.id
         body = {
             "requests": [
-                {"updateDimensionProperties": {
-                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
-                    "properties": {"pixelSize": col['width']},
-                    "fields": "pixelSize"
-                }} for i, col in enumerate(config.COLUMNS)
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": i,
+                            "endIndex": i + 1,
+                        },
+                        "properties": {"pixelSize": col["width"]},
+                        "fields": "pixelSize",
+                    }
+                }
+                for i, col in enumerate(config.COLUMNS)
             ]
         }
         self.spreadsheet.batch_update(body)
@@ -271,80 +317,120 @@ class BaseStatsFormatter:
         requests = []
 
         # Поставщик (фиолетовый)
-        requests.append({
-            "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": row-1, "endRowIndex": row, "startColumnIndex": 1, "endColumnIndex": 2},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['provider_bg'],
-                        "textFormat": self.config.TEXT_FORMAT,
-                        "horizontalAlignment": "LEFT"
-                    }
-                },
-                "fields": "userEnteredFormat"
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": self.config.COLORS["provider_bg"],
+                            "textFormat": self.config.TEXT_FORMAT,
+                            "horizontalAlignment": "LEFT",
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
             }
-        })
+        )
 
         # Кол-во (жёлтый)
-        requests.append({
-            "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": row-1, "endRowIndex": row, "startColumnIndex": 2, "endColumnIndex": 3},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['calls_bg'],
-                        "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
-                        "horizontalAlignment": "CENTER"
-                    }
-                },
-                "fields": "userEnteredFormat"
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": 2,
+                        "endColumnIndex": 3,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": self.config.COLORS["calls_bg"],
+                            "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
+                            "horizontalAlignment": "CENTER",
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
             }
-        })
+        )
 
         # Бомж (розовый)
-        requests.append({
-            "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": row-1, "endRowIndex": row, "startColumnIndex": 3, "endColumnIndex": 4},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['bomzh_bg'],
-                        "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
-                        "horizontalAlignment": "CENTER"
-                    }
-                },
-                "fields": "userEnteredFormat"
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": 3,
+                        "endColumnIndex": 4,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": self.config.COLORS["bomzh_bg"],
+                            "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
+                            "horizontalAlignment": "CENTER",
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
             }
-        })
+        )
 
         # Перезвоны (зелёный)
-        requests.append({
-            "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": row-1, "endRowIndex": row, "startColumnIndex": 4, "endColumnIndex": 5},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['recalls_bg'],
-                        "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
-                        "horizontalAlignment": "CENTER"
-                    }
-                },
-                "fields": "userEnteredFormat"
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": 4,
+                        "endColumnIndex": 5,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": self.config.COLORS["recalls_bg"],
+                            "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
+                            "horizontalAlignment": "CENTER",
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
             }
-        })
+        )
 
         # Ручные поля (фиолетовый)
         for col_idx in [5, 6]:  # Пошло в работу, Закрыто
-            requests.append({
-                "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": row-1, "endRowIndex": row, "startColumnIndex": col_idx, "endColumnIndex": col_idx+1},
-                    "cell": {
-                        "userEnteredFormat": {
-                            "backgroundColor": self.config.COLORS['manual_bg'],
-                            "textFormat": self.config.TEXT_FORMAT,
-                            "horizontalAlignment": "CENTER"
-                        }
-                    },
-                    "fields": "userEnteredFormat"
+            requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row - 1,
+                            "endRowIndex": row,
+                            "startColumnIndex": col_idx,
+                            "endColumnIndex": col_idx + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": self.config.COLORS["manual_bg"],
+                                "textFormat": self.config.TEXT_FORMAT,
+                                "horizontalAlignment": "CENTER",
+                            }
+                        },
+                        "fields": "userEnteredFormat",
+                    }
                 }
-            })
+            )
 
         return requests
 
@@ -357,9 +443,9 @@ class BaseStatsFormatter:
                     "startRowIndex": start_row,
                     "endRowIndex": end_row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 1
+                    "endColumnIndex": 1,
                 },
-                "mergeType": "MERGE_ALL"
+                "mergeType": "MERGE_ALL",
             }
         }
 
@@ -372,17 +458,17 @@ class BaseStatsFormatter:
                     "startRowIndex": start_row,
                     "endRowIndex": end_row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 1
+                    "endColumnIndex": 1,
                 },
                 "cell": {
                     "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['date_bg'],
+                        "backgroundColor": self.config.COLORS["date_bg"],
                         "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
                         "horizontalAlignment": "CENTER",
-                        "verticalAlignment": "MIDDLE"
+                        "verticalAlignment": "MIDDLE",
                     }
                 },
-                "fields": "userEnteredFormat"
+                "fields": "userEnteredFormat",
             }
         }
 
@@ -392,20 +478,20 @@ class BaseStatsFormatter:
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": row-1,
+                    "startRowIndex": row - 1,
                     "endRowIndex": row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 8
+                    "endColumnIndex": 8,
                 },
                 "cell": {
                     "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['day_total_bg'],
+                        "backgroundColor": self.config.COLORS["day_total_bg"],
                         "textFormat": {**self.config.TEXT_FORMAT, "bold": True},
                         "horizontalAlignment": "CENTER",
-                        "verticalAlignment": "MIDDLE"
+                        "verticalAlignment": "MIDDLE",
                     }
                 },
-                "fields": "userEnteredFormat"
+                "fields": "userEnteredFormat",
             }
         }
 
@@ -415,20 +501,23 @@ class BaseStatsFormatter:
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": row-1,
+                    "startRowIndex": row - 1,
                     "endRowIndex": row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 8
+                    "endColumnIndex": 8,
                 },
                 "cell": {
                     "userEnteredFormat": {
-                        "backgroundColor": self.config.COLORS['week_total_bg'],
-                        "textFormat": {**self.config.HEADER_FORMAT, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                        "backgroundColor": self.config.COLORS["week_total_bg"],
+                        "textFormat": {
+                            **self.config.HEADER_FORMAT,
+                            "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                        },
                         "horizontalAlignment": "CENTER",
-                        "verticalAlignment": "MIDDLE"
+                        "verticalAlignment": "MIDDLE",
                     }
                 },
-                "fields": "userEnteredFormat"
+                "fields": "userEnteredFormat",
             }
         }
 
@@ -441,14 +530,38 @@ class BaseStatsFormatter:
                     "startRowIndex": 1,
                     "endRowIndex": last_row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 7
+                    "endColumnIndex": 7,
                 },
-                "top": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
-                "bottom": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
-                "left": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
-                "right": {"style": "SOLID", "width": 2, "color": {"red": 0, "green": 0, "blue": 0}},
-                "innerHorizontal": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
-                "innerVertical": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
+                "top": {
+                    "style": "SOLID",
+                    "width": 2,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
+                "bottom": {
+                    "style": "SOLID",
+                    "width": 2,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
+                "left": {
+                    "style": "SOLID",
+                    "width": 2,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
+                "right": {
+                    "style": "SOLID",
+                    "width": 2,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
+                "innerHorizontal": {
+                    "style": "SOLID",
+                    "width": 1,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
+                "innerVertical": {
+                    "style": "SOLID",
+                    "width": 1,
+                    "color": {"red": 0, "green": 0, "blue": 0},
+                },
             }
         }
 
@@ -457,9 +570,11 @@ class BaseStatsService:
     """Главный сервис для работы с таблицей 'Статистика баз'"""
 
     def __init__(self):
-        self.timezone = pytz.timezone('Europe/Kiev')
+        self.timezone = pytz.timezone("Europe/Kiev")
         self.sheet_id = os.getenv("BASE_STATS_SHEET_ID")
-        self.credentials_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
+        self.credentials_file = os.getenv(
+            "GOOGLE_CREDENTIALS_FILE", "google_credentials.json"
+        )
 
         self.client = None
         self.spreadsheet = None
@@ -469,7 +584,9 @@ class BaseStatsService:
         self.formatter = None
 
         if not self.sheet_id:
-            logger.warning("⚠️ BASE_STATS_SHEET_ID не найден - статистика баз недоступна")
+            logger.warning(
+                "⚠️ BASE_STATS_SHEET_ID не найден - статистика баз недоступна"
+            )
             return
 
         if not self._authorize():
@@ -482,7 +599,9 @@ class BaseStatsService:
 
         logger.info("✅ BaseStatsService инициализирован")
 
-    def calculate_provider_stats(self, raw_data: List[Dict]) -> Dict[str, Dict[str, int]]:
+    def calculate_provider_stats(
+        self, raw_data: List[Dict]
+    ) -> Dict[str, Dict[str, int]]:
         """Подсчитать статистику по поставщикам для совместимости с тестами"""
         return BaseStatsDataCollector.calculate_provider_stats(raw_data)
 
@@ -493,8 +612,13 @@ class BaseStatsService:
                 logger.error(f"❌ Файл {self.credentials_file} не найден!")
                 return False
 
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = ServiceAccountCredentials.from_json_keyfile_name(self.credentials_file, scope)
+            scope = [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive",
+            ]
+            creds = ServiceAccountCredentials.from_json_keyfile_name(
+                self.credentials_file, scope
+            )
             self.client = gspread.authorize(creds)
             self.spreadsheet = self.client.open_by_key(self.sheet_id)
 
@@ -517,7 +641,15 @@ class BaseStatsService:
     @retry(**API_RETRY_CONFIG)
     async def update_stats(self):
         """Главная функция обновления статистики"""
-        if not all([self.client, self.spreadsheet, self.collector, self.sheet_manager, self.formatter]):
+        if not all(
+            [
+                self.client,
+                self.spreadsheet,
+                self.collector,
+                self.sheet_manager,
+                self.formatter,
+            ]
+        ):
             raise Exception("BaseStatsService не инициализирован")
 
         now = datetime.now(self.timezone)
@@ -542,7 +674,9 @@ class BaseStatsService:
 
         logger.info("✅ Статистика баз обновлена")
 
-    async def _collect_week_data(self, week_start: datetime, week_end: datetime) -> Dict[str, Dict[str, Dict[str, int]]]:
+    async def _collect_week_data(
+        self, week_start: datetime, week_end: datetime
+    ) -> Dict[str, Dict[str, Dict[str, int]]]:
         """Собрать данные за всю неделю"""
         all_stats = {}
         today = datetime.now(self.timezone).date()
@@ -553,7 +687,7 @@ class BaseStatsService:
                 current_date += timedelta(days=1)
                 continue
 
-            date_str = current_date.strftime('%d.%m')
+            date_str = current_date.strftime("%d.%m")
             logger.info(f"📅 Обработка {date_str}")
 
             try:
@@ -568,7 +702,12 @@ class BaseStatsService:
 
         return all_stats
 
-    async def _update_sheet_data(self, worksheet, all_stats: Dict[str, Dict[str, Dict[str, int]]], week_start: datetime):
+    async def _update_sheet_data(
+        self,
+        worksheet,
+        all_stats: Dict[str, Dict[str, Dict[str, int]]],
+        week_start: datetime,
+    ):
         """Обновить данные на листе с форматированием"""
         updates = []
         merge_requests = []
@@ -581,8 +720,8 @@ class BaseStatsService:
         # Проходим по дням недели
         for day_offset in range(6):  # ПН-СБ
             current_date = week_start + timedelta(days=day_offset)
-            date_str = current_date.strftime('%d.%m')
-            date_full = current_date.strftime('%d.%m.%Y')
+            date_str = current_date.strftime("%d.%m")
+            date_full = current_date.strftime("%d.%m.%Y")
 
             stats = all_stats.get(date_str, {})
 
@@ -590,9 +729,9 @@ class BaseStatsService:
                 continue
 
             first_row = row
-            day_total_calls = sum(s['calls'] for s in stats.values())
-            day_total_bomzh = sum(s['bomzh'] for s in stats.values())
-            day_total_recalls = sum(s['recalls'] for s in stats.values())
+            day_total_calls = sum(s["calls"] for s in stats.values())
+            day_total_bomzh = sum(s["bomzh"] for s in stats.values())
+            day_total_recalls = sum(s["recalls"] for s in stats.values())
 
             weekly_stats["total_calls"] += day_total_calls
             weekly_stats["total_bomzh"] += day_total_bomzh
@@ -600,58 +739,99 @@ class BaseStatsService:
 
             # Строки поставщиков
             for provider, data in sorted(stats.items()):
-                pct_recalls = (data['recalls'] / data['calls'] * 100) if data['calls'] > 0 else 0
+                _pct_recalls = (
+                    (data["recalls"] / data["calls"] * 100) if data["calls"] > 0 else 0
+                )
 
-                updates.append({
-                    'range': f'A{row}:G{row}',
-                    'values': [[
-                        date_full, provider, data['calls'], data['bomzh'], data['recalls'],
-                        "", ""
-                    ]]
-                })
+                updates.append(
+                    {
+                        "range": f"A{row}:G{row}",
+                        "values": [
+                            [
+                                date_full,
+                                provider,
+                                data["calls"],
+                                data["bomzh"],
+                                data["recalls"],
+                                "",
+                                "",
+                            ]
+                        ],
+                    }
+                )
 
-                format_requests.extend(self.formatter.format_provider_row(sheet_id, row))
+                format_requests.extend(
+                    self.formatter.format_provider_row(sheet_id, row)
+                )
                 row += 1
 
             last_row = row - 1
 
             # Объединение даты
             if last_row >= first_row:
-                merge_requests.append(self.formatter.format_date_merge(sheet_id, first_row-1, last_row))
-                format_requests.append(self.formatter.format_date_cell(sheet_id, first_row-1, last_row))
+                merge_requests.append(
+                    self.formatter.format_date_merge(sheet_id, first_row - 1, last_row)
+                )
+                format_requests.append(
+                    self.formatter.format_date_cell(sheet_id, first_row - 1, last_row)
+                )
 
             # Итоговая строка дня
-            day_pct_recalls = (day_total_recalls / day_total_calls * 100) if day_total_calls > 0 else 0
+            _day_pct_recalls = (
+                (day_total_recalls / day_total_calls * 100)
+                if day_total_calls > 0
+                else 0
+            )
 
-            updates.append({
-                'range': f'A{row}:H{row}',
-                'values': [[
-                    "ИТОГО", "ИТОГО", day_total_calls, day_total_bomzh, day_total_recalls,
-                    "", ""
-                ]]
-            })
+            updates.append(
+                {
+                    "range": f"A{row}:H{row}",
+                    "values": [
+                        [
+                            "ИТОГО",
+                            "ИТОГО",
+                            day_total_calls,
+                            day_total_bomzh,
+                            day_total_recalls,
+                            "",
+                            "",
+                        ]
+                    ],
+                }
+            )
 
             format_requests.append(self.formatter.format_day_total(sheet_id, row))
             row += 2  # Отступ
 
         # Итоговая строка недели
         if weekly_stats["total_calls"] > 0:
-            weekly_pct = (weekly_stats["total_recalls"] / weekly_stats["total_calls"] * 100)
+            _weekly_pct = (
+                weekly_stats["total_recalls"] / weekly_stats["total_calls"] * 100
+            )
 
-            updates.append({
-                'range': f'A{row}:G{row}',
-                'values': [[
-                    "НЕДЕЛЯ", "ИТОГО", weekly_stats["total_calls"], weekly_stats["total_bomzh"],
-                    weekly_stats["total_recalls"], "", ""
-                ]]
-            })
+            updates.append(
+                {
+                    "range": f"A{row}:G{row}",
+                    "values": [
+                        [
+                            "НЕДЕЛЯ",
+                            "ИТОГО",
+                            weekly_stats["total_calls"],
+                            weekly_stats["total_bomzh"],
+                            weekly_stats["total_recalls"],
+                            "",
+                            "",
+                        ]
+                    ],
+                }
+            )
 
             format_requests.append(self.formatter.format_week_total(sheet_id, row))
 
         # Применяем обновления
         if updates:
             logger.info(f"📤 Отправка {len(updates)} обновлений")
-            worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+            worksheet.batch_update(updates, value_input_option="USER_ENTERED")
 
         # Применяем объединение и форматирование
         if merge_requests or format_requests:

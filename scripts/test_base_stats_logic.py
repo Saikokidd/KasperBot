@@ -9,34 +9,31 @@ scripts/test_base_stats_logic.py
 from datetime import datetime, timedelta
 from typing import Dict, List
 
+
 # Имитируем логику подсчёта из base_stats_service
 def count_calls_by_provider(raw_data: List[Dict]) -> Dict[str, Dict[str, int]]:
     """Подсчитать метрики по каждому поставщику"""
     stats = {}
-    
+
     for row in raw_data:
         provider = row.get("поставщик", "").strip()
-        
+
         if not provider:
             continue
-        
+
         if provider not in stats:
-            stats[provider] = {
-                "calls": 0,
-                "recalls": 0,
-                "bomzh": 0
-            }
-        
+            stats[provider] = {"calls": 0, "recalls": 0, "bomzh": 0}
+
         stats[provider]["calls"] += 1
-        
+
         # Определяем тип трубки по цвету в графе "итог"
         itog_color = row.get("итог_цвет", "").strip().upper()
-        
+
         if itog_color == "РОЗОВЫЙ":
             stats[provider]["bomzh"] += 1
         elif itog_color == "ЗЕЛЕНЫЙ":
             stats[provider]["recalls"] += 1
-    
+
     return stats
 
 
@@ -45,28 +42,32 @@ def print_stats_table(date_str: str, stats: Dict):
     print(f"\n{'='*90}")
     print(f"📊 СТАТИСТИКА за {date_str}")
     print(f"{'='*90}")
-    print(f"{'Поставщик':<30} {'Кол-во':>8} {'Бомж':>8} {'Перезвоны':>10} {'% перезвонов':>12}")
+    print(
+        f"{'Поставщик':<30} {'Кол-во':>8} {'Бомж':>8} {'Перезвоны':>10} {'% перезвонов':>12}"
+    )
     print(f"{'-'*90}")
-    
+
     total_calls = 0
     total_bomzh = 0
     total_recalls = 0
-    
+
     for provider, data in sorted(stats.items()):
-        calls = data['calls']
-        bomzh = data['bomzh']
-        recalls = data['recalls']
+        calls = data["calls"]
+        bomzh = data["bomzh"]
+        recalls = data["recalls"]
         pct = (recalls / calls * 100) if calls > 0 else 0
-        
+
         print(f"{provider:<30} {calls:>8} {bomzh:>8} {recalls:>10} {pct:>11.0f}%")
-        
+
         total_calls += calls
         total_bomzh += bomzh
         total_recalls += recalls
-    
+
     print(f"{'-'*90}")
     total_pct = (total_recalls / total_calls * 100) if total_calls > 0 else 0
-    print(f"{'ИТОГО':<30} {total_calls:>8} {total_bomzh:>8} {total_recalls:>10} {total_pct:>11.0f}%")
+    print(
+        f"{'ИТОГО':<30} {total_calls:>8} {total_bomzh:>8} {total_recalls:>10} {total_pct:>11.0f}%"
+    )
     print(f"{'='*90}\n")
 
 
@@ -86,7 +87,6 @@ test_data_15_12 = [
     {"поставщик": "3к_МСК_helphub", "итог_цвет": ""},
     {"поставщик": "3к_МСК_helphub", "итог_цвет": "РОЗОВЫЙ"},
     {"поставщик": "3к_МСК_helphub", "итог_цвет": ""},
-    
     {"поставщик": "1к_регл_Анон", "итог_цвет": "ЗЕЛЕНЫЙ"},
     {"поставщик": "1к_регл_Анон", "итог_цвет": "ЗЕЛЕНЫЙ"},
     {"поставщик": "1к_регл_Анон", "итог_цвет": ""},
@@ -101,14 +101,12 @@ test_data_15_12 = [
     {"поставщик": "1к_регл_Анон", "итог_цвет": "РОЗОВЫЙ"},
     {"поставщик": "1к_регл_Анон", "итог_цвет": ""},
     {"поставщик": "1к_регл_Анон", "итог_цвет": ""},
-    
     {"поставщик": "1к+Абентен+ред", "итог_цвет": ""},
     {"поставщик": "1к+Абентен+ред", "итог_цвет": "ЗЕЛЕНЫЙ"},
     {"поставщик": "1к+Абентен+ред", "итог_цвет": ""},
     {"поставщик": "1к+Абентен+ред", "итог_цвет": "ЗЕЛЕНЫЙ"},
     {"поставщик": "1к+Абентен+ред", "итог_цвет": ""},
     {"поставщик": "1к+Абентен+ред", "итог_цвет": ""},
-    
     {"поставщик": "0.3к_Prado_xmosem_отдел", "итог_цвет": ""},
 ]
 
@@ -128,11 +126,11 @@ test_data_16_12 = [
 def test_calculations():
     """Тестирование логики подсчёта"""
     print("\n🧪 ТЕСТИРОВАНИЕ ЛОГИКИ ПОДСЧЁТА BASE_STATS_SERVICE\n")
-    
+
     # Тест 1: 15.12.2025
     stats_15_12 = count_calls_by_provider(test_data_15_12)
     print_stats_table("15.12.2025", stats_15_12)
-    
+
     # Проверяем ожидаемые результаты (со скрина)
     expected_15_12 = {
         "3к_МСК_helphub": {"calls": 12, "recalls": 4, "bomzh": 2},
@@ -140,30 +138,36 @@ def test_calculations():
         "1к+Абентен+ред": {"calls": 6, "recalls": 3, "bomzh": 0},
         "0.3к_Prado_xmosem_отдел": {"calls": 1, "recalls": 0, "bomzh": 0},
     }
-    
+
     print("✅ ПРОВЕРКА РЕЗУЛЬТАТОВ для 15.12.2025:")
     for provider, expected in expected_15_12.items():
         actual = stats_15_12.get(provider, {})
-        
+
         match_calls = actual.get("calls", 0) == expected["calls"]
         match_recalls = actual.get("recalls", 0) == expected["recalls"]
         match_bomzh = actual.get("bomzh", 0) == expected["bomzh"]
-        
+
         status = "✅" if (match_calls and match_recalls and match_bomzh) else "❌"
-        
+
         print(f"  {status} {provider}")
         if not match_calls:
-            print(f"     ❌ Кол-во: ожидали {expected['calls']}, получили {actual.get('calls', 0)}")
+            print(
+                f"     ❌ Кол-во: ожидали {expected['calls']}, получили {actual.get('calls', 0)}"
+            )
         if not match_recalls:
-            print(f"     ❌ Перезвоны: ожидали {expected['recalls']}, получили {actual.get('recalls', 0)}")
+            print(
+                f"     ❌ Перезвоны: ожидали {expected['recalls']}, получили {actual.get('recalls', 0)}"
+            )
         if not match_bomzh:
-            print(f"     ❌ Бомжи: ожидали {expected['bomzh']}, получили {actual.get('bomzh', 0)}")
-    
+            print(
+                f"     ❌ Бомжи: ожидали {expected['bomzh']}, получили {actual.get('bomzh', 0)}"
+            )
+
     # Проверяем итого
-    total_calls = sum(s['calls'] for s in stats_15_12.values())
-    total_recalls = sum(s['recalls'] for s in stats_15_12.values())
-    total_bomzh = sum(s['bomzh'] for s in stats_15_12.values())
-    
+    total_calls = sum(s["calls"] for s in stats_15_12.values())
+    total_recalls = sum(s["recalls"] for s in stats_15_12.values())
+    total_bomzh = sum(s["bomzh"] for s in stats_15_12.values())
+
     print(f"\n  📊 ИТОГО за день:")
     print(f"     Кол-во: {total_calls} (ожидали 35)")
     print(f"     Перезвоны: {total_recalls} (ожидали 16)")
@@ -174,7 +178,7 @@ def test_calculations():
 def test_percentage_calculation():
     """Тестирование расчёта процентов"""
     print("\n\n🧮 ТЕСТИРОВАНИЕ РАСЧЁТА ПРОЦЕНТОВ\n")
-    
+
     test_cases = [
         ({"calls": 10, "recalls": 5}, 50),
         ({"calls": 100, "recalls": 25}, 25),
@@ -182,17 +186,19 @@ def test_percentage_calculation():
         ({"calls": 1, "recalls": 0}, 0),
         ({"calls": 0, "recalls": 0}, 0),  # Деление на ноль
     ]
-    
+
     for data, expected_pct in test_cases:
-        pct = (data['recalls'] / data['calls'] * 100) if data['calls'] > 0 else 0
+        pct = (data["recalls"] / data["calls"] * 100) if data["calls"] > 0 else 0
         status = "✅" if int(pct) == expected_pct else "⚠️"
-        print(f"  {status} {data['calls']} трубок, {data['recalls']} перезвонов → {pct:.0f}% (ожидали {expected_pct}%)")
+        print(
+            f"  {status} {data['calls']} трубок, {data['recalls']} перезвонов → {pct:.0f}% (ожидали {expected_pct}%)"
+        )
 
 
 if __name__ == "__main__":
     test_calculations()
     test_percentage_calculation()
-    
-    print("\n" + "="*90)
+
+    print("\n" + "=" * 90)
     print("✅ ТЕСТИРОВАНИЕ ЗАВЕРШЕНО")
-    print("="*90 + "\n")
+    print("=" * 90 + "\n")

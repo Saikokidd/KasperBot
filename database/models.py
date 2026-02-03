@@ -10,31 +10,31 @@
 ✅ get_quick_error_telephonies() - получить список
 """
 import sqlite3
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 from typing import List, Dict, Optional
-from pathlib import Path
 from contextlib import closing
 from utils.logger import logger
 
 
 class Database:
     """Класс для работы с SQLite базой данных"""
-    
+
     def __init__(self, db_path: str = "bot_data.db"):
         self.db_path = db_path
         self._create_tables()
-    
+
     def _get_connection(self):
         """Создаёт подключение к БД"""
         return sqlite3.connect(self.db_path)
-    
+
     def _create_tables(self):
         """Создаёт все необходимые таблицы"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         # Таблица менеджеров
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS managers (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -42,10 +42,12 @@ class Database:
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 added_by INTEGER
             )
-        """)
-        
+        """
+        )
+
         # Таблица телефоний
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS telephonies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
@@ -56,10 +58,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_by INTEGER
             )
-        """)
-        
+        """
+        )
+
         # Таблица истории ошибок
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS error_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -74,10 +78,12 @@ class Database:
                 support_action TEXT,
                 response_time_seconds INTEGER
             )
-        """)
-        
+        """
+        )
+
         # Таблица рассылок
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS broadcasts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_text TEXT,
@@ -87,10 +93,12 @@ class Database:
                 success_count INTEGER,
                 failed_count INTEGER
             )
-        """)
-        
+        """
+        )
+
         # Таблица статистики менеджеров по дням
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS manager_daily_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -104,10 +112,12 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, date)
             )
-        """)
-        
+        """
+        )
+
         # Таблица SIP менеджеров
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS manager_sips (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL UNIQUE,
@@ -116,33 +126,41 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES managers(user_id)
             )
-        """)
+        """
+        )
 
         # ✅ НОВАЯ ТАБЛИЦА: Телефонии с быстрыми ошибками
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS quick_error_telephonies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telephony_code TEXT UNIQUE NOT NULL,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (telephony_code) REFERENCES telephonies(code)
             )
-        """)
-        
+        """
+        )
+
         conn.commit()
         conn.close()
         logger.info("✅ Таблицы БД созданы/проверены")
-    
+
     # ===== МЕНЕДЖЕРЫ =====
-    
-    def add_manager(self, user_id: int, username: str = None, 
-                    first_name: str = None, added_by: int = None) -> bool:
+
+    def add_manager(
+        self,
+        user_id: int,
+        username: str = None,
+        first_name: str = None,
+        added_by: int = None,
+    ) -> bool:
         """Добавляет менеджера в БД"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO managers (user_id, username, first_name, added_by) VALUES (?, ?, ?, ?)",
-                    (user_id, username, first_name, added_by)
+                    (user_id, username, first_name, added_by),
                 )
                 conn.commit()
             logger.info(f"✅ Менеджер {user_id} добавлен в БД")
@@ -153,7 +171,7 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка добавления менеджера: {e}")
             return False
-    
+
     def remove_manager(self, user_id: int) -> bool:
         """Удаляет менеджера"""
         try:
@@ -168,7 +186,7 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка удаления менеджера: {e}")
             return False
-    
+
     def get_all_managers(self) -> List[Dict]:
         """Возвращает список всех менеджеров"""
         try:
@@ -178,20 +196,20 @@ class Database:
                     "SELECT user_id, username, first_name, added_at FROM managers ORDER BY added_at DESC"
                 )
                 rows = cursor.fetchall()
-            
+
             return [
                 {
                     "user_id": row[0],
                     "username": row[1],
                     "first_name": row[2],
-                    "added_at": row[3]
+                    "added_at": row[3],
                 }
                 for row in rows
             ]
         except Exception as e:
             logger.error(f"❌ Ошибка получения менеджеров: {e}")
             return []
-    
+
     def is_manager(self, user_id: int) -> bool:
         """Проверяет, является ли пользователь менеджером"""
         try:
@@ -203,36 +221,41 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка проверки менеджера: {e}")
             return False
-    
-    def update_manager_info(self, user_id: int, username: str = None, first_name: str = None) -> bool:
+
+    def update_manager_info(
+        self, user_id: int, username: str = None, first_name: str = None
+    ) -> bool:
         """Обновляет информацию о менеджере"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE managers SET username = ?, first_name = ? WHERE user_id = ?",
-                    (username, first_name, user_id)
+                    (username, first_name, user_id),
                 )
                 updated = cursor.rowcount > 0
                 conn.commit()
             if updated:
-                logger.info(f"✅ Обновлены данные менеджера {user_id}: {username}, {first_name}")
+                logger.info(
+                    f"✅ Обновлены данные менеджера {user_id}: {username}, {first_name}"
+                )
             return updated
         except Exception as e:
             logger.error(f"❌ Ошибка обновления менеджера: {e}")
             return False
-    
+
     # ===== ТЕЛЕФОНИИ =====
-    
-    def add_telephony(self, name: str, code: str, tel_type: str, 
-                      group_id: int, created_by: int = None) -> bool:
+
+    def add_telephony(
+        self, name: str, code: str, tel_type: str, group_id: int, created_by: int = None
+    ) -> bool:
         """Добавляет телефонию"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO telephonies (name, code, type, group_id, created_by) VALUES (?, ?, ?, ?, ?)",
-                    (name, code.lower(), tel_type, group_id, created_by)
+                    (name, code.lower(), tel_type, group_id, created_by),
                 )
                 conn.commit()
             logger.info(f"✅ Телефония {name} ({tel_type}) добавлена")
@@ -243,7 +266,7 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка добавления телефонии: {e}")
             return False
-    
+
     def remove_telephony(self, code: str) -> bool:
         """Удаляет телефонию по коду"""
         try:
@@ -258,7 +281,7 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка удаления телефонии: {e}")
             return False
-    
+
     def get_all_telephonies(self) -> List[Dict]:
         """Возвращает список всех телефоний"""
         try:
@@ -268,21 +291,21 @@ class Database:
                     "SELECT name, code, type, group_id, enabled FROM telephonies WHERE enabled = 1 ORDER BY name"
                 )
                 rows = cursor.fetchall()
-            
+
             return [
                 {
                     "name": row[0],
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4]
+                    "enabled": row[4],
                 }
                 for row in rows
             ]
         except Exception as e:
             logger.error(f"❌ Ошибка получения телефоний: {e}")
             return []
-    
+
     def get_telephony_by_code(self, code: str) -> Optional[Dict]:
         """Получает телефонию по коду"""
         try:
@@ -290,23 +313,23 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT name, code, type, group_id, enabled FROM telephonies WHERE code = ?",
-                    (code,)
+                    (code,),
                 )
                 row = cursor.fetchone()
-            
+
             if row:
                 return {
                     "name": row[0],
                     "code": row[1],
                     "type": row[2],
                     "group_id": row[3],
-                    "enabled": row[4]
+                    "enabled": row[4],
                 }
             return None
         except Exception as e:
             logger.error(f"❌ Ошибка получения телефонии: {e}")
             return None
-    
+
     def update_telephony_group(self, code: str, new_group_id: int) -> bool:
         """Обновляет ID группы для телефонии"""
         try:
@@ -314,7 +337,7 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE telephonies SET group_id = ? WHERE code = ?",
-                    (new_group_id, code)
+                    (new_group_id, code),
                 )
                 updated = cursor.rowcount > 0
                 conn.commit()
@@ -324,18 +347,19 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка обновления группы: {e}")
             return False
-    
+
     # ===== ИСТОРИЯ ОШИБОК =====
-    
-    def log_error_report(self, user_id: int, username: str, 
-                        telephony_code: str, description: str) -> Optional[int]:
+
+    def log_error_report(
+        self, user_id: int, username: str, telephony_code: str, description: str
+    ) -> Optional[int]:
         """Логирует отправленную ошибку"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO error_reports (user_id, username, telephony_code, description) VALUES (?, ?, ?, ?)",
-                    (user_id, username, telephony_code, description)
+                    (user_id, username, telephony_code, description),
                 )
                 report_id = cursor.lastrowid
                 conn.commit()
@@ -343,15 +367,21 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка логирования ошибки: {e}")
             return None
-    
-    def update_error_report(self, report_id: int, support_user_id: int,
-                           support_username: str, support_action: str,
-                           response_time_seconds: int) -> bool:
+
+    def update_error_report(
+        self,
+        report_id: int,
+        support_user_id: int,
+        support_username: str,
+        support_action: str,
+        response_time_seconds: int,
+    ) -> bool:
         """Обновляет запись об ошибке после обработки саппортом"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE error_reports 
                     SET resolved_at = CURRENT_TIMESTAMP,
                         support_user_id = ?,
@@ -360,26 +390,45 @@ class Database:
                         response_time_seconds = ?,
                         status = 'resolved'
                     WHERE id = ?
-                """, (support_user_id, support_username, support_action, response_time_seconds, report_id))
+                """,
+                    (
+                        support_user_id,
+                        support_username,
+                        support_action,
+                        response_time_seconds,
+                        report_id,
+                    ),
+                )
                 updated = cursor.rowcount > 0
                 conn.commit()
             if updated:
-                logger.info(f"✅ Ошибка #{report_id} обновлена в БД (время ответа: {response_time_seconds//60}м {response_time_seconds%60}с)")
+                logger.info(
+                    f"✅ Ошибка #{report_id} обновлена в БД (время ответа: {response_time_seconds // 60}м {response_time_seconds % 60}с)"
+                )
             return updated
         except Exception as e:
             logger.error(f"❌ Ошибка обновления ошибки: {e}")
             return False
-    
+
     # ===== СТАТИСТИКА МЕНЕДЖЕРОВ =====
-    
-    def upsert_manager_stats(self, user_id: int, username: str, first_name: str,
-                            date_str: str, tubes_total: int, tubes_green: int = 0,
-                            tubes_yellow: int = 0, tubes_purple: int = 0) -> bool:
+
+    def upsert_manager_stats(
+        self,
+        user_id: int,
+        username: str,
+        first_name: str,
+        date_str: str,
+        tubes_total: int,
+        tubes_green: int = 0,
+        tubes_yellow: int = 0,
+        tubes_purple: int = 0,
+    ) -> bool:
         """Добавляет или обновляет статистику менеджера за день"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO manager_daily_stats 
                     (user_id, username, first_name, date, tubes_total, tubes_green, tubes_yellow, tubes_purple, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -391,29 +440,46 @@ class Database:
                         tubes_yellow = excluded.tubes_yellow,
                         tubes_purple = excluded.tubes_purple,
                         updated_at = CURRENT_TIMESTAMP
-                """, (user_id, username, first_name, date_str, tubes_total, tubes_green, tubes_yellow, tubes_purple))
+                """,
+                    (
+                        user_id,
+                        username,
+                        first_name,
+                        date_str,
+                        tubes_total,
+                        tubes_green,
+                        tubes_yellow,
+                        tubes_purple,
+                    ),
+                )
                 conn.commit()
-            logger.info(f"✅ Статистика менеджера {user_id} ({first_name}) за {date_str} обновлена: {tubes_total} трубок")
+            logger.info(
+                f"✅ Статистика менеджера {user_id} ({first_name}) за {date_str} обновлена: {tubes_total} трубок"
+            )
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения статистики: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return False
-    
+
     def get_managers_stats_for_date(self, date_str: str) -> List[Dict]:
         """Получить статистику всех менеджеров за конкретную дату"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT user_id, username, first_name, tubes_total, tubes_green, tubes_yellow, tubes_purple
                     FROM manager_daily_stats
                     WHERE date = ?
                     ORDER BY tubes_total DESC
-                """, (date_str,))
+                """,
+                    (date_str,),
+                )
                 rows = cursor.fetchall()
-            
+
             return [
                 {
                     "user_id": row[0],
@@ -422,131 +488,138 @@ class Database:
                     "tubes": row[3],
                     "green": row[4],
                     "yellow": row[5],
-                    "purple": row[6]
+                    "purple": row[6],
                 }
                 for row in rows
             ]
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики: {e}")
             return []
-    
-    def get_managers_stats_for_week(self, start_date: str, end_date: str) -> Dict[int, Dict[str, Dict]]:
+
+    def get_managers_stats_for_week(
+        self, start_date: str, end_date: str
+    ) -> Dict[int, Dict[str, Dict]]:
         """Получить статистику менеджеров за неделю (ПН-СБ)"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT user_id, username, first_name, date, tubes_total, tubes_green, tubes_yellow, tubes_purple
                     FROM manager_daily_stats
                     WHERE date BETWEEN ? AND ?
                     ORDER BY user_id, date
-                """, (start_date, end_date))
+                """,
+                    (start_date, end_date),
+                )
                 rows = cursor.fetchall()
-            
+
             result = {}
             for row in rows:
                 user_id = row[0]
                 if user_id not in result:
-                    result[user_id] = {
-                        "username": row[1],
-                        "name": row[2],
-                        "dates": {}
-                    }
-                
+                    result[user_id] = {"username": row[1], "name": row[2], "dates": {}}
+
                 date_key = row[3]
                 result[user_id]["dates"][date_key] = {
                     "tubes": row[4],
                     "green": row[5],
                     "yellow": row[6],
-                    "purple": row[7]
+                    "purple": row[7],
                 }
-            
+
             return result
         except Exception as e:
             logger.error(f"❌ Ошибка получения недельной статистики: {e}")
             return {}
-    
+
     # ===== SIP МЕНЕДЖЕРОВ =====
-    
+
     def save_manager_sip(self, user_id: int, sip_number: str) -> bool:
         """Сохранить/обновить SIP менеджера"""
         try:
             today = date.today().isoformat()
-            
+
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO manager_sips (user_id, sip_number, last_updated)
                     VALUES (?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         sip_number = excluded.sip_number,
                         last_updated = excluded.last_updated
-                """, (user_id, sip_number, today))
+                """,
+                    (user_id, sip_number, today),
+                )
                 conn.commit()
-            
+
             logger.info(f"✅ SIP сохранён для user_id={user_id}: {sip_number}")
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения SIP: {e}")
             return False
-    
+
     def get_manager_sip(self, user_id: int) -> Optional[Dict]:
         """Получить SIP менеджера"""
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT sip_number, last_updated 
                     FROM manager_sips 
                     WHERE user_id = ?
-                """, (user_id,))
+                """,
+                    (user_id,),
+                )
                 row = cursor.fetchone()
-            
+
             if row:
-                return {
-                    'sip_number': row[0],
-                    'last_updated': row[1]
-                }
+                return {"sip_number": row[0], "last_updated": row[1]}
             return None
         except Exception as e:
             logger.error(f"❌ Ошибка получения SIP: {e}")
             return None
-    
+
     def is_sip_valid_today(self, user_id: int) -> bool:
         """Проверить, указан ли SIP сегодня"""
         sip_data = self.get_manager_sip(user_id)
-        
+
         if not sip_data:
             return False
-        
+
         today = date.today().isoformat()
-        return sip_data['last_updated'] == today
-    
+        return sip_data["last_updated"] == today
+
     def reset_all_sips(self) -> int:
         """Сбросить валидность всех SIP (вызывается утром в 8:00)"""
         try:
             yesterday = (date.today() - timedelta(days=1)).isoformat()
             today = date.today().isoformat()
-            
+
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                
-                cursor.execute("""
+
+                cursor.execute(
+                    """
                     UPDATE manager_sips 
                     SET last_updated = ?
                     WHERE last_updated >= ?
-                """, (yesterday, today))
-                
+                """,
+                    (yesterday, today),
+                )
+
                 affected = cursor.rowcount
                 conn.commit()
-            
+
             if affected > 0:
                 logger.info(f"✅ Сброшено {affected} SIP (не обновлённых сегодня)")
             else:
                 logger.info("ℹ️ Все SIP уже были сброшены ранее")
-            
+
             return affected
-            
+
         except Exception as e:
             logger.error(f"❌ Ошибка сброса SIP: {e}")
             return 0
@@ -556,37 +629,37 @@ class Database:
     def add_quick_error_telephony(self, code: str) -> bool:
         """
         Добавить телефонию в быстрые ошибки
-        
+
         Args:
             code: Код телефонии (bmw, zvon, и т.д.)
-            
+
         Returns:
             True если успешно
         """
         try:
             # Проверяем что телефония существует и белая
             tel = self.get_telephony_by_code(code)
-            
+
             if not tel:
                 logger.warning(f"⚠️ Телефония {code} не найдена")
                 return False
-            
-            if tel['type'] != 'white':
+
+            if tel["type"] != "white":
                 logger.warning(f"⚠️ Телефония {code} не белая (тип: {tel['type']})")
                 return False
-            
+
             # Добавляем в быстрые
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO quick_error_telephonies (telephony_code) VALUES (?)",
-                    (code,)
+                    (code,),
                 )
                 conn.commit()
-            
+
             logger.info(f"✅ Телефония {code} добавлена в быстрые ошибки")
             return True
-            
+
         except sqlite3.IntegrityError:
             logger.warning(f"⚠️ Телефония {code} уже в быстрых ошибках")
             return False
@@ -597,10 +670,10 @@ class Database:
     def remove_quick_error_telephony(self, code: str) -> bool:
         """
         Удалить телефонию из быстрых ошибок
-        
+
         Args:
             code: Код телефонии
-            
+
         Returns:
             True если успешно
         """
@@ -609,18 +682,18 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute(
                     "DELETE FROM quick_error_telephonies WHERE telephony_code = ?",
-                    (code,)
+                    (code,),
                 )
                 deleted = cursor.rowcount > 0
                 conn.commit()
-            
+
             if deleted:
                 logger.info(f"✅ Телефония {code} удалена из быстрых ошибок")
             else:
                 logger.warning(f"⚠️ Телефония {code} не была в быстрых ошибках")
-            
+
             return deleted
-            
+
         except Exception as e:
             logger.error(f"❌ Ошибка удаления из быстрых ошибок: {e}")
             return False
@@ -628,10 +701,10 @@ class Database:
     def is_quick_error_telephony(self, code: str) -> bool:
         """
         Проверить, является ли телефония быстрой
-        
+
         Args:
             code: Код телефонии
-            
+
         Returns:
             True если телефония в быстрых ошибках
         """
@@ -640,12 +713,12 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT 1 FROM quick_error_telephonies WHERE telephony_code = ?",
-                    (code,)
+                    (code,),
                 )
                 exists = cursor.fetchone() is not None
-            
+
             return exists
-            
+
         except Exception as e:
             logger.error(f"❌ Ошибка проверки быстрых ошибок: {e}")
             return False
@@ -653,32 +726,29 @@ class Database:
     def get_quick_error_telephonies(self) -> List[Dict]:
         """
         Получить список всех телефоний с быстрыми ошибками
-        
+
         Returns:
             Список словарей с информацией о телефониях
         """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT t.name, t.code, t.group_id, qe.added_at
                     FROM quick_error_telephonies qe
                     JOIN telephonies t ON qe.telephony_code = t.code
                     WHERE t.enabled = 1
                     ORDER BY t.name
-                """)
+                """
+                )
                 rows = cursor.fetchall()
-            
+
             return [
-                {
-                    "name": row[0],
-                    "code": row[1],
-                    "group_id": row[2],
-                    "added_at": row[3]
-                }
+                {"name": row[0], "code": row[1], "group_id": row[2], "added_at": row[3]}
                 for row in rows
             ]
-            
+
         except Exception as e:
             logger.error(f"❌ Ошибка получения списка быстрых ошибок: {e}")
             return []

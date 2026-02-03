@@ -1,8 +1,18 @@
 """
 Fixtures для всех тестов
+
+ВАЖНО: загрузка .env.test должна быть ПЕРВОЙ операцией,
+до любого импорта модулей проекта (config, services и т.д.)
 """
+import os
 import pytest
 from unittest.mock import MagicMock
+from dotenv import load_dotenv
+
+# Загружаем тестовые переменные окружения ДО любого импорта проекта
+# Путь: tests/../.env.test = корень проекта
+_test_env_path = os.path.join(os.path.dirname(__file__), "..", ".env.test")
+load_dotenv(dotenv_path=os.path.abspath(_test_env_path), override=True)
 
 
 @pytest.fixture

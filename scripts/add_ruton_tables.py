@@ -8,15 +8,16 @@ DB_PATH = Path(__file__).parent.parent / "bot_data.db"
 
 def create_ruton_tables():
     """Создаёт таблицы для Ruton интеграции"""
-    
+
     print("🔄 Создание таблиц для Ruton...")
-    
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     try:
         # Таблица логов поисков
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS ruton_searches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 manager_id INTEGER NOT NULL,
@@ -30,23 +31,26 @@ def create_ruton_tables():
                 
                 FOREIGN KEY (manager_id) REFERENCES managers(user_id)
             )
-        """)
-        
+        """
+        )
+
         # Индекс для статистики
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_ruton_searches_manager 
             ON ruton_searches(manager_id, created_at)
-        """)
-        
+        """
+        )
+
         conn.commit()
-        
+
         print("✅ Таблицы Ruton созданы успешно")
-        
+
         # Проверка
         cursor.execute("SELECT COUNT(*) FROM ruton_searches")
         count = cursor.fetchone()[0]
         print(f"📊 Записей в ruton_searches: {count}")
-        
+
     except Exception as e:
         print(f"❌ Ошибка: {e}")
         conn.rollback()

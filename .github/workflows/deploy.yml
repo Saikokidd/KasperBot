@@ -6,13 +6,93 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  # ──────────────────────────────────────────
+  # JOB 1: Линтер — проверка качества кода
+  # ──────────────────────────────────────────
+  lint:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dev dependencies
+      run: pip install flake8 black
+
+    - name: Run flake8
+      run: |
+        # Проверяем код, но игнорируем некоторые правила:
+        # E501 — длинные строки (часто неизбежны)
+        # W291, W292, W293 — пробелы в конце строк
+        # E302, E303 — пустые строки между функциями
+        flake8 . \
+          --exclude=venv,__pycache__,.git,.github,backups,scripts \
+          --max-line-length=120 \
+          --ignore=E501,W291,W292,W293,E302,E303,W503,E741 \
+          --count \
+          --show-source \
+          --statistics
+
+    - name: Run black (check)
+      run: |
+        # Проверяем, что код отформатирован согласно black
+        black --check .
+
+  # ──────────────────────────────────────────
+  # JOB 2: Тесты — проверяем что код работает
+  # ──────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Cache pip
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+
+    - name: Run pytest
+      run: |
+        python -m pytest tests/ -v --tb=short --junitxml=test-report.xml
+
+    - name: Upload test report
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: test-report.xml
+
+  # ──────────────────────────────────────────
+  # JOB 3: Деплой — только если lint и test ✅
+  # ──────────────────────────────────────────
+  deploy:
+    runs-on: ubuntu-latest
+    # Деплой идёт ТОЛЬКО если оба предыдущих job пройдены
+    needs: [lint, test]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Deploy to VPS
       uses: appleboy/ssh-action@v1.0.0
       with:
@@ -21,26 +101,26 @@ jobs:
         key: ${{ secrets.VPS_SSH_KEY }}
         script: |
           cd /root/projects/error_bot
-          
+
           # Backup текущей версии
           BACKUP_DIR="/root/projects/error_bot/backups/auto_$(date +%Y%m%d_%H%M%S)"
           echo "Creating backup: $BACKUP_DIR"
           mkdir -p "$BACKUP_DIR"
           cp -r config handlers keyboards services utils main.py requirements.txt "$BACKUP_DIR/" 2>/dev/null || true
-          
+
           # Pull последних изменений
           echo "Pulling latest changes from GitHub..."
           git fetch origin
           git reset --hard origin/main || git reset --hard origin/master
-          
+
           # Обновление зависимостей
           echo "Updating dependencies..."
           /root/projects/error_bot/venv/bin/pip install -r requirements.txt --upgrade
-          
+
           # Перезапуск бота
           echo "Restarting bot service..."
           systemctl restart error_bot
-          
+
           # Проверка статуса
           sleep 3
           if systemctl is-active --quiet error_bot; then
@@ -55,10 +135,47 @@ jobs:
             fi
             exit 1
           fi
-          
-          # Очистка старых backup'ов
+
+          # Очистка старых backup'ов (оставляем последние 5)
           echo "Cleaning old backups..."
           cd /root/projects/error_bot/backups
           ls -t | grep "^auto_" | tail -n +6 | xargs -r rm -rf
-          
+
           echo "Deployment completed successfully!"
+
+  # ──────────────────────────────────────────
+  # JOB 4: Уведомление в Telegram
+  # ──────────────────────────────────────────
+  notify:
+    runs-on: ubuntu-latest
+    # Запускается ВСЕГДА, даже если что-то упало
+    if: always()
+    # Ждёт всех job'ов
+    needs: [lint, test, deploy]
+
+    steps:
+    - name: Send Telegram notification
+      run: |
+        # Определяем статус каждого job
+        LINT_STATUS="${{ needs.lint.result }}"
+        TEST_STATUS="${{ needs.test.result }}"
+        DEPLOY_STATUS="${{ needs.deploy.result }}"
+
+        # Формируем сообщение
+        if [ "$DEPLOY_STATUS" = "success" ]; then
+          EMOJI="✅"
+          STATUS="Деплой успешен!"
+        elif [ "$DEPLOY_STATUS" = "skipped" ]; then
+          EMOJI="⛔"
+          STATUS="Деплой отменён (ошибки в тестах/линтере)"
+        else
+          EMOJI="❌"
+          STATUS="Ошибка деплоя!"
+        fi
+
+        MESSAGE="${EMOJI} KasperBot CI/CD\n\nСтатус: ${STATUS}\n\nЛинтер: ${LINT_STATUS}\nТесты: ${TEST_STATUS}\nДеплой: ${DEPLOY_STATUS}\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}"
+
+        # Отправляем через Telegram Bot API
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
