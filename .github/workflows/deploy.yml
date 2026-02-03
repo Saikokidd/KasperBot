@@ -3,6 +3,8 @@ name: Deploy to VPS
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -180,6 +182,7 @@ jobs:
   # ──────────────────────────────────────────
   deploy:
     # Проверяем доступ через шаг 'Check VPS secrets' (см. ниже)
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Деплой идёт ТОЛЬКО если предыдущие job'ы пройдены и проверка подключения успешна
     needs: [lint, test, deploy_check]
