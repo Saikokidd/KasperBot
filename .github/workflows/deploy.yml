@@ -144,24 +144,47 @@ jobs:
           echo "Deployment completed successfully!"
 
   # ──────────────────────────────────────────
-  # JOB 4: Уведомление в Telegram
+  # JOB 4A: Start notification — сообщает, что pipeline запущен
+  # ──────────────────────────────────────────
+  notify_start:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Send Telegram notification (start)
+      run: |
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        MESSAGE="🚀 KasperBot pipeline started\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}\nRun: ${RUN_URL}"
+
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
+  # ──────────────────────────────────────────
+  # JOB 4B: Финальное уведомление — всегда выполняется и включает ссылку на run и первые строки тест-репорта при падении
   # ──────────────────────────────────────────
   notify:
     runs-on: ubuntu-latest
     # Запускается ВСЕГДА, даже если что-то упало
     if: always()
-    # Ждёт всех job'ов
-    needs: [lint, test, deploy]
+    # Ждёт всех job'ов (и стартовое уведомление)
+    needs: [lint, test, deploy, notify_start]
 
     steps:
+    - name: Download test report (if any)
+      uses: actions/download-artifact@v4
+      with:
+        name: test-report
+        path: ./test-report-artefact
+      continue-on-error: true
+
     - name: Send Telegram notification
       run: |
-        # Определяем статус каждого job
+        # Получаем статусы
         LINT_STATUS="${{ needs.lint.result }}"
         TEST_STATUS="${{ needs.test.result }}"
         DEPLOY_STATUS="${{ needs.deploy.result }}"
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-        # Формируем сообщение
         if [ "$DEPLOY_STATUS" = "success" ]; then
           EMOJI="✅"
           STATUS="Деплой успешен!"
@@ -173,9 +196,16 @@ jobs:
           STATUS="Ошибка деплоя!"
         fi
 
-        MESSAGE="${EMOJI} KasperBot CI/CD\n\nСтатус: ${STATUS}\n\nЛинтер: ${LINT_STATUS}\nТесты: ${TEST_STATUS}\nДеплой: ${DEPLOY_STATUS}\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}"
+        EXTRA=""
+        if [ -f ./test-report-artefact/test-report.xml ]; then
+          if [ "$TEST_STATUS" != "success" ]; then
+            EXTRA="\n\nТест-репорт (первые 30 строк):\n$(head -n 30 ./test-report-artefact/test-report.xml | sed 's/"/\\"/g')"
+          fi
+        fi
 
-        # Отправляем через Telegram Bot API
+        MESSAGE="${EMOJI} KasperBot CI/CD\n\nСтатус: ${STATUS}\n\nЛинтер: ${LINT_STATUS}\nТесты: ${TEST_STATUS}\nДеплой: ${DEPLOY_STATUS}\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}\nRun: ${RUN_URL}${EXTRA}"
+
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
