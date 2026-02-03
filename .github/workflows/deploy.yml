@@ -82,14 +82,72 @@ jobs:
         path: test-report.xml
 
   # ──────────────────────────────────────────
-  # JOB 3: Деплой — только если lint и test ✅
+  # JOB 3A: Проверка подключения к VPS (предварительная)
+  # ──────────────────────────────────────────
+  deploy_check:
+    runs-on: ubuntu-latest
+    # Проверяем доступ только если секреты заданы
+    if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
+    needs: [lint, test]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Write SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.VPS_SSH_KEY }}" > ./vps_key
+        chmod 600 ./vps_key
+
+    - name: Try SSH connection (simple check)
+      run: |
+        set -o pipefail
+        echo "Testing SSH connection to ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}..." > connection.log
+        ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i ./vps_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "echo SSH_OK" >> connection.log 2>&1 || true
+        echo "---- connection log start ----" && tail -n 200 connection.log || true
+        if ! grep -q "SSH_OK" connection.log; then
+          echo "SSH connection failed; saving log and failing the job."
+          echo "*** BEGIN CONNECTION LOG ***" > failure.log
+          tail -n 200 connection.log >> failure.log
+          cat failure.log
+          exit 1
+        fi
+
+    - name: Upload connection log
+      uses: actions/upload-artifact@v4
+      with:
+        name: vps-connection-log
+        path: connection.log
+
+    - name: Send Telegram notification (success)
+      if: success()
+      run: |
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        MESSAGE="✅ VPS reachable: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}\nRun: ${RUN_URL}\nКоммит: ${{ github.event.head_commit.message }}"
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
+    - name: Send Telegram notification (failure)
+      if: failure()
+      run: |
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        LOG_SNIPPET="$(head -n 30 connection.log | sed 's/"/\\"/g')"
+        MESSAGE="❌ VPS unreachable: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}\nRun: ${RUN_URL}\nКоммит: ${{ github.event.head_commit.message }}\n\nЛог:\n${LOG_SNIPPET}"
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
+  # ──────────────────────────────────────────
+  # JOB 3B: Деплой — выполнится только после проверки подключения
   # ──────────────────────────────────────────
   deploy:
     # Пропустим деплой, если не заданы переменные для доступа к VPS
     if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
     runs-on: ubuntu-latest
-    # Деплой идёт ТОЛЬКО если оба предыдущих job пройдены
-    needs: [lint, test]
+    # Деплой идёт ТОЛЬКО если предыдущие job'ы пройдены и проверка подключения успешна
+    needs: [lint, test, deploy_check]
 
     steps:
     - name: Checkout code
@@ -144,7 +202,6 @@ jobs:
           ls -t | grep "^auto_" | tail -n +6 | xargs -r rm -rf
 
           echo "Deployment completed successfully!"
-
   # ──────────────────────────────────────────
   # JOB 4A: Start notification — сообщает, что pipeline запущен
   # ──────────────────────────────────────────
