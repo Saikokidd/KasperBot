@@ -100,25 +100,42 @@ jobs:
   # ──────────────────────────────────────────
   deploy_check:
     runs-on: ubuntu-latest
-    env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-    # Проверяем доступ только если секреты заданы
-    if: ${{ env.VPS_HOST != '' && env.VPS_USER != '' && env.VPS_SSH_KEY != '' }}
+    # Проверяем доступ через шаг 'Check VPS secrets' (см. ниже)
     needs: [lint, test]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Check VPS secrets
+      id: check_secrets
+      run: |
+        # Проверяем наличие секретов; записываем результат в outputs
+        if [ -z "${{ secrets.VPS_HOST }}" ] || [ -z "${{ secrets.VPS_USER }}" ] || [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "VPS secrets missing; skipping deploy_check and deploy."
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Notify skip (secrets missing)
+      if: steps.check_secrets.outputs.skip == 'true'
+      run: |
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        MESSAGE="⛔ VPS secrets missing — skipping deploy_check and deploy. Run: ${RUN_URL}"
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
     - name: Write SSH key
+      if: steps.check_secrets.outputs.skip == 'false'
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.VPS_SSH_KEY }}" > ./vps_key
         chmod 600 ./vps_key
 
     - name: Try SSH connection (simple check)
+      if: steps.check_secrets.outputs.skip == 'false'
       run: |
         set -o pipefail
         echo "Testing SSH connection to ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}..." > connection.log
@@ -133,13 +150,14 @@ jobs:
         fi
 
     - name: Upload connection log
+      if: steps.check_secrets.outputs.skip == 'false'
       uses: actions/upload-artifact@v4
       with:
         name: vps-connection-log
         path: connection.log
 
     - name: Send Telegram notification (success)
-      if: success()
+      if: steps.check_secrets.outputs.skip == 'false' && success()
       run: |
         RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         MESSAGE="✅ VPS reachable: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}\nRun: ${RUN_URL}\nКоммит: ${{ github.event.head_commit.message }}"
@@ -148,7 +166,7 @@ jobs:
           -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
 
     - name: Send Telegram notification (failure)
-      if: failure()
+      if: steps.check_secrets.outputs.skip == 'false' && failure()
       run: |
         RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         LOG_SNIPPET="$(head -n 30 connection.log | sed 's/"/\\"/g')"
@@ -161,12 +179,7 @@ jobs:
   # JOB 3B: Деплой — выполнится только после проверки подключения
   # ──────────────────────────────────────────
   deploy:
-    env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-    # Пропустим деплой, если не заданы переменные для доступа к VPS
-    if: ${{ env.VPS_HOST != '' && env.VPS_USER != '' && env.VPS_SSH_KEY != '' }}
+    # Проверяем доступ через шаг 'Check VPS secrets' (см. ниже)
     runs-on: ubuntu-latest
     # Деплой идёт ТОЛЬКО если предыдущие job'ы пройдены и проверка подключения успешна
     needs: [lint, test, deploy_check]
