@@ -23,7 +23,7 @@ class InputValidator:
     
     # Границы
     USER_ID_MIN = 1000
-    USER_ID_MAX = 2**31 - 1
+    USER_ID_MAX = 2**63 - 1  # Максимум 64-битного целого числа (Telegram использует 64-бит)
     SIP_MIN_LEN = 1
     SIP_MAX_LEN = 50
     ERROR_DESC_MIN_LEN = 5
