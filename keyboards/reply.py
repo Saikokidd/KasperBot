@@ -14,7 +14,7 @@ def get_manager_menu() -> ReplyKeyboardMarkup:
     """Генерирует клавиатуру меню для менеджера"""
     return ReplyKeyboardMarkup(
         [[KeyboardButton(text) for text in row] for row in MANAGER_MENU],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
 
 
@@ -22,7 +22,7 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     """Генерирует клавиатуру меню для администратора"""
     return ReplyKeyboardMarkup(
         [[KeyboardButton(text) for text in row] for row in ADMIN_MENU],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
 
 
@@ -30,17 +30,17 @@ def get_pult_menu() -> ReplyKeyboardMarkup:
     """Генерирует клавиатуру меню для пульта"""
     return ReplyKeyboardMarkup(
         [[KeyboardButton(text) for text in row] for row in PULT_MENU],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
 
 
 def get_menu_by_role(role: str) -> ReplyKeyboardMarkup:
     """
     Возвращает клавиатуру меню в зависимости от роли
-    
+
     Args:
         role: Роль пользователя ("manager", "admin" или "pult")
-        
+
     Returns:
         ReplyKeyboardMarkup соответствующая роли
     """

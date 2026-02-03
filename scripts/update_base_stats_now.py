@@ -18,7 +18,7 @@ from utils.logger import logger
 async def main():
     try:
         logger.info("🔄 Запуск ручного обновления статистики баз...")
-        
+
         if not base_stats_service.client or not base_stats_service.spreadsheet:
             logger.error("❌ BaseStatsService не инициализирован!")
             logger.error("   Проверьте:")
@@ -26,17 +26,18 @@ async def main():
             logger.error("   2. google_credentials.json существует")
             logger.error("   3. Сервис-аккаунт имеет доступ к таблице")
             return
-        
+
         logger.info(f"📋 Таблица: {base_stats_service.spreadsheet.title}")
-        
+
         await base_stats_service.update_stats()
-        
+
         logger.info("✅ Готово!")
         logger.info("   Проверьте таблицу в Google Sheets")
-        
+
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
 
