@@ -103,9 +103,7 @@ class GoogleSheetsFallback:
             self.logger.warning(f"⚠️ Ошибка получения статистики всех менеджеров: {e}")
 
             if use_cache:
-                self.logger.info(
-                    "💾 Используем кэшированную статистику всех менеджеров"
-                )
+                self.logger.info("💾 Используем кэшированную статистику всех менеджеров")
                 cached_stats = sheets_cache.load_from_cache(cache_key, max_age_hours=24)
 
                 if cached_stats:
