@@ -91,7 +91,6 @@ from handlers.quick_errors import (
 )
 
 
-
 async def fallback_callback(update, context):
     """Fallback для неизвестных callback"""
     query = update.callback_query

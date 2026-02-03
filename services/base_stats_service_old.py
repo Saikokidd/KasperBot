@@ -9,7 +9,6 @@ services/base_stats_service.py
 ✅ Автозаполнение: Дата, Поставщик, Кол-во, Перезвоны
 """
 
-import re
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
