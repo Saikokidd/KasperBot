@@ -85,6 +85,8 @@ jobs:
   # JOB 3: Деплой — только если lint и test ✅
   # ──────────────────────────────────────────
   deploy:
+    # Пропустим деплой, если не заданы переменные для доступа к VPS
+    if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     # Деплой идёт ТОЛЬКО если оба предыдущих job пройдены
     needs: [lint, test]
