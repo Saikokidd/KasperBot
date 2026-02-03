@@ -1,0 +1,63 @@
+name: Enable auto-merge & branch protection
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show token scopes
+        env:
+          PAT: ${{ secrets.AUTOMERGE_PAT }}
+        run: |
+          echo "Checking token scopes..."
+          curl -sI -H "Authorization: token $PAT" https://api.github.com/user | grep -i 'x-oauth-scopes' || true
+
+      - name: Enable auto-merge (squash-only) on repo
+        env:
+          PAT: ${{ secrets.AUTOMERGE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Enabling auto-merge and setting squash-only..."
+          curl -s -X PATCH -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO \
+            -d '{"allow_auto_merge":true,"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' \
+            -o /tmp/repo_set.json -w "%{http_code}" | tee /tmp/repo_status.out
+          echo "Response body:" && cat /tmp/repo_set.json || true
+          echo "Response status code:" && cat /tmp/repo_status.out || true
+
+      - name: Apply branch protection to main (require checks and 1 reviewer)
+        env:
+          PAT: ${{ secrets.AUTOMERGE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          BRANCH=main
+          echo "Applying protection to $BRANCH..."
+          curl -s -X PUT -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/branches/$BRANCH/protection \
+            -d '{
+              "required_status_checks": {"strict": false, "contexts": ["lint","test"]},
+              "enforce_admins": false,
+              "required_pull_request_reviews": {"dismiss_stale_reviews": false, "dismissal_restrictions": {}, "require_code_owner_reviews": false, "required_approving_review_count": 1},
+              "restrictions": null
+            }' -o /tmp/prot.json -w "%{http_code}" | tee /tmp/prot_status.out
+          echo "Protection response body:" && cat /tmp/prot.json || true
+          echo "Protection response status code:" && cat /tmp/prot_status.out || true
+
+      - name: Verify branch protection
+        env:
+          PAT: ${{ secrets.AUTOMERGE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          curl -s -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" https://api.github.com/repos/$REPO/branches/main/protection | jq .
+
+      - name: Done
+        run: echo "Auto-merge & branch protection workflow finished. Check above steps for status."
