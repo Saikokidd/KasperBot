@@ -21,8 +21,10 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install dev dependencies
-      run: pip install flake8 black
+    - name: Install dev dependencies (capture output)
+      run: |
+        set -o pipefail
+        pip install flake8 black 2>&1 | tee pip_lint_install.log || true
 
     - name: Run flake8 (capture output)
       run: |
@@ -47,6 +49,7 @@ jobs:
         path: |
           flake8.log
           black_check.log
+          pip_lint_install.log
 
   # ──────────────────────────────────────────
   # JOB 2: Тесты — проверяем что код работает
@@ -71,10 +74,11 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-    - name: Install dependencies
+    - name: Install dependencies (capture output)
       run: |
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+        set -o pipefail
+        pip install -r requirements.txt 2>&1 | tee pip_install.log || true
+        pip install -r requirements-dev.txt 2>&1 | tee pip_install_dev.log || true
 
     - name: Run pytest (capture output & junit)
       run: |
@@ -88,6 +92,8 @@ jobs:
         path: |
           test-report.xml
           pytest.log
+          pip_install.log
+          pip_install_dev.log
 
   # ──────────────────────────────────────────
   # JOB 3A: Проверка подключения к VPS (предварительная)
