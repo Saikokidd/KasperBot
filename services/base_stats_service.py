@@ -118,7 +118,8 @@ class BaseStatsDataCollector:
                 logger.debug(f"✅ Получено {len(data)} записей поставщиков за {date_str}")
                 return data
 
-    def calculate_provider_stats(self, raw_data: List[Dict]) -> Dict[str, Dict[str, int]]:
+    @staticmethod
+    def calculate_provider_stats(raw_data: List[Dict]) -> Dict[str, Dict[str, int]]:
         """Подсчитать статистику по поставщикам"""
         if not raw_data:
             return {}
@@ -135,8 +136,8 @@ class BaseStatsDataCollector:
 
             stats[provider]["calls"] += 1
 
-            # Определяем тип по цвету
-            color = row.get("цвет", "").strip().upper()
+            # Определяем тип по цвету (поддерживаем оба ключа: 'цвет' и 'итог_цвет')
+            color = (row.get("цвет") or row.get("итог_цвет") or "").strip().upper()
             if color == "РОЗОВЫЙ":
                 stats[provider]["bomzh"] += 1
             elif color == "ЗЕЛЕНЫЙ":
@@ -463,7 +464,8 @@ class BaseStatsService:
         self.client = None
         self.spreadsheet = None
         self.collector = None
-        self.sheet_manager = None
+        # Всегда создаём экземпляр sheet_manager (client/spreadsheet могут быть None)
+        self.sheet_manager = BaseStatsSheetManager(self.client, self.spreadsheet)
         self.formatter = None
 
         if not self.sheet_id:
@@ -482,7 +484,7 @@ class BaseStatsService:
 
     def calculate_provider_stats(self, raw_data: List[Dict]) -> Dict[str, Dict[str, int]]:
         """Подсчитать статистику по поставщикам для совместимости с тестами"""
-        return self.collector.calculate_provider_stats(raw_data)
+        return BaseStatsDataCollector.calculate_provider_stats(raw_data)
 
     def _authorize(self) -> bool:
         """Авторизация в Google Sheets"""
@@ -556,7 +558,7 @@ class BaseStatsService:
 
             try:
                 raw_data = await self.collector.fetch_provider_data(date_str)
-                stats = self.collector.calculate_provider_stats(raw_data)
+                stats = BaseStatsDataCollector.calculate_provider_stats(raw_data)
                 all_stats[date_str] = stats
             except Exception as e:
                 logger.error(f"❌ Ошибка получения данных за {date_str}: {e}")
