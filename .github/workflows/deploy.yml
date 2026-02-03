@@ -24,24 +24,29 @@ jobs:
     - name: Install dev dependencies
       run: pip install flake8 black
 
-    - name: Run flake8
+    - name: Run flake8 (capture output)
       run: |
-        # Проверяем код, но игнорируем некоторые правила:
-        # E501 — длинные строки (часто неизбежны)
-        # W291, W292, W293 — пробелы в конце строк
-        # E302, E303 — пустые строки между функциями
+        set -o pipefail
+        # Проверяем код, сохраняем вывод в flake8.log
         flake8 . \
           --exclude=venv,__pycache__,.git,.github,backups,scripts \
           --max-line-length=120 \
           --ignore=E501,W291,W292,W293,E302,E303,W503,E741 \
           --count \
           --show-source \
-          --statistics
+          --statistics 2>&1 | tee flake8.log || true
 
-    - name: Run black (check)
+    - name: Run black (check, capture)
       run: |
-        # Проверяем, что код отформатирован согласно black
-        black --check .
+        black --check . 2>&1 | tee black_check.log || true
+
+    - name: Upload lint logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: lint-logs
+        path: |
+          flake8.log
+          black_check.log
 
   # ──────────────────────────────────────────
   # JOB 2: Тесты — проверяем что код работает
@@ -71,15 +76,18 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
 
-    - name: Run pytest
+    - name: Run pytest (capture output & junit)
       run: |
-        python -m pytest tests/ -v --tb=short --junitxml=test-report.xml
+        set -o pipefail
+        python -m pytest tests/ -v --tb=short --junitxml=test-report.xml 2>&1 | tee pytest.log || true
 
-    - name: Upload test report
+    - name: Upload test report and logs
       uses: actions/upload-artifact@v4
       with:
         name: test-report
-        path: test-report.xml
+        path: |
+          test-report.xml
+          pytest.log
 
   # ──────────────────────────────────────────
   # JOB 3A: Проверка подключения к VPS (предварительная)
@@ -229,11 +237,25 @@ jobs:
     needs: [lint, test, deploy, notify_start]
 
     steps:
+    - name: Download lint logs (if any)
+      uses: actions/download-artifact@v4
+      with:
+        name: lint-logs
+        path: ./lint-logs
+      continue-on-error: true
+
     - name: Download test report (if any)
       uses: actions/download-artifact@v4
       with:
         name: test-report
-        path: ./test-report-artefact
+        path: ./test-logs
+      continue-on-error: true
+
+    - name: Download vps connection log (if any)
+      uses: actions/download-artifact@v4
+      with:
+        name: vps-connection-log
+        path: ./vps-log
       continue-on-error: true
 
     - name: Send Telegram notification
@@ -255,16 +277,28 @@ jobs:
           STATUS="Ошибка деплоя!"
         fi
 
-        EXTRA=""
-        if [ -f ./test-report-artefact/test-report.xml ]; then
-          if [ "$TEST_STATUS" != "success" ]; then
-            EXTRA="\n\nТест-репорт (первые 30 строк):\n$(head -n 30 ./test-report-artefact/test-report.xml | sed 's/"/\\"/g')"
-          fi
+        EXTRA_LINT=""
+        if [ "$LINT_STATUS" != "success" ] && [ -f ./lint-logs/flake8.log ]; then
+          EXTRA_LINT="\n\nLint (flake8) errors (top 30 lines):\n$(head -n 30 ./lint-logs/flake8.log | sed 's/"/\\"/g')"
+        fi
+        if [ "$LINT_STATUS" != "success" ] && [ -f ./lint-logs/black_check.log ]; then
+          EXTRA_LINT="${EXTRA_LINT}\n\nBlack output (top 30 lines):\n$(head -n 30 ./lint-logs/black_check.log | sed 's/"/\\"/g')"
         fi
 
-        MESSAGE="${EMOJI} KasperBot CI/CD\n\nСтатус: ${STATUS}\n\nЛинтер: ${LINT_STATUS}\nТесты: ${TEST_STATUS}\nДеплой: ${DEPLOY_STATUS}\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}\nRun: ${RUN_URL}${EXTRA}"
+        EXTRA_TEST=""
+        if [ "$TEST_STATUS" != "success" ] && [ -f ./test-logs/pytest.log ]; then
+          EXTRA_TEST="\n\nPytest log (top 30 lines):\n$(head -n 30 ./test-logs/pytest.log | sed 's/"/\\"/g')"
+        fi
+
+        EXTRA_VPS=""
+        if [ -f ./vps-log/connection.log ]; then
+          EXTRA_VPS="\n\nVPS connection log (top 30 lines):\n$(head -n 30 ./vps-log/connection.log | sed 's/"/\\"/g')"
+        fi
+
+        MESSAGE="${EMOJI} KasperBot CI/CD\n\nСтатус: ${STATUS}\n\nЛинтер: ${LINT_STATUS}\nТесты: ${TEST_STATUS}\nДеплой: ${DEPLOY_STATUS}\n\nКоммит: ${{ github.event.head_commit.message }}\nВетвь: ${{ github.ref_name }}\nАвтор: ${{ github.actor }}\nRun: ${RUN_URL}${EXTRA_LINT}${EXTRA_TEST}${EXTRA_VPS}"
 
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${MESSAGE}\", \"parse_mode\": \"HTML\"}"
+
 
