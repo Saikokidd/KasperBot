@@ -9,7 +9,7 @@
 ✅ get_dashboard_timing() - добавлен type hint
 """
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Tuple
 from database.models import db
 from utils.logger import logger
 

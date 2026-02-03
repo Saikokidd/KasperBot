@@ -478,7 +478,7 @@ class ManagementService:
                 stats["success"] += 1
                 logger.debug(f"✅ Рассылка отправлена user_id={user_id}")
 
-            except telegram_error.Forbidden as e:
+            except telegram_error.Forbidden:
                 # ✅ НОВОЕ: Отдельная обработка для заблокировавших бота
                 stats["blocked"] += 1
                 stats["failed_ids"].append(user_id)

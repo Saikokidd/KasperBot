@@ -11,7 +11,7 @@ from typing import Optional, Tuple, List, Dict, Any
 from database.models import db
 from utils.logger import logger
 from config.validators import InputValidator
-from config.constants import QUICK_ERRORS, MAX_SIP_LENGTH
+from config.constants import QUICK_ERRORS
 
 
 class QuickErrorService:

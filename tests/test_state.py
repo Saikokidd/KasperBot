@@ -3,13 +3,11 @@
 """
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 from utils.state import (
     get_user_role,
     set_user_role,
     set_tel_choice,
     get_tel_choice,
-    is_tel_choice_expired,
     clear_all_states,
     clear_tel_choice,
     set_quick_error_sip,

@@ -753,7 +753,7 @@ class BaseStatsService:
                                 data["calls"],
                                 data["bomzh"],
                                 data["recalls"],
-                                "",
+                                f"{_pct_recalls:.1f}%",
                                 "",
                             ]
                         ],
@@ -793,7 +793,7 @@ class BaseStatsService:
                             day_total_calls,
                             day_total_bomzh,
                             day_total_recalls,
-                            "",
+                            f"{_day_pct_recalls:.1f}%",
                             "",
                         ]
                     ],
@@ -819,7 +819,7 @@ class BaseStatsService:
                             weekly_stats["total_calls"],
                             weekly_stats["total_bomzh"],
                             weekly_stats["total_recalls"],
-                            "",
+                            f"{_weekly_pct:.1f}%",
                             "",
                         ]
                     ],

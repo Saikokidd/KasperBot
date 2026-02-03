@@ -8,7 +8,6 @@ services/google_sheets_cache.py - КЭШ И FALLBACK ДЛЯ GOOGLE SHEETS
 ✅ Graceful degradation вместо полного краха бота
 """
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -102,13 +101,13 @@ class GoogleSheetsCache:
 
             if age > timedelta(hours=max_age_hours):
                 logger.warning(
-                    f"⏰ Кэш истёк ({age.total_seconds()/3600:.1f} часов): {key}"
+                    f"⏰ Кэш истёк ({age.total_seconds() / 3600:.1f} часов): {key}"
                 )
                 cache_path.unlink()  # Удаляем старый кэш
                 return None
 
             logger.debug(
-                f"✅ Кэш загружен ({age.total_seconds()/60:.1f} минут назад): {key}"
+                f"✅ Кэш загружен ({age.total_seconds() / 60:.1f} минут назад): {key}"
             )
             return cache_data.get("data")
 

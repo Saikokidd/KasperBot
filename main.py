@@ -88,9 +88,8 @@ from handlers.analytics import (
 from handlers.quick_errors import (
     handle_quick_error_callback,
     handle_change_sip_callback,
-    handle_sip_input_for_quick_error,
-    handle_custom_error_input,
-)  # noqa: F401
+)
+
 
 
 async def fallback_callback(update, context):
@@ -150,8 +149,8 @@ async def rate_limit_middleware(update, context):
             logger.warning(f"⚠️ Rate limit: callback от {user_id}")
             try:
                 await update.callback_query.answer(msg, show_alert=True)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Rate limit: unable to send callback alert: {e}")
             return False  # Блокируем обработчик
 
     return True  # Разрешаем обработчик

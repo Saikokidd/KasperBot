@@ -107,7 +107,7 @@ class ManagersStatsService:
         except aiohttp.ClientError as e:
             logger.error(f"❌ Ошибка HTTP запроса: {e}", exc_info=True)
             raise
-        except ValueError as e:
+        except ValueError:
             raise
         except Exception as e:
             logger.error(f"❌ Ошибка получения данных: {e}", exc_info=True)
