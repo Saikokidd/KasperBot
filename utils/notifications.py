@@ -9,6 +9,7 @@
 """
 from datetime import datetime, timedelta
 from typing import Optional
+import html
 from telegram import Bot
 from telegram.error import TelegramError
 
@@ -122,10 +123,13 @@ class NotificationService:
         # ✅ НОВОЕ: Автоочистка
         NotificationService._cleanup_old_notifications()
 
+        # Экранируем пользовательский ввод для HTML
+        safe_details = html.escape(details)
+
         message = (
             f"⚠️ <b>ПРЕДУПРЕЖДЕНИЕ</b>\n\n"
-            f"📝 {warning_type}\n"
-            f"ℹ️ {details}\n\n"
+            f"📝 {html.escape(warning_type)}\n"
+            f"ℹ️ {safe_details}\n\n"
             f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
 
@@ -144,7 +148,7 @@ class NotificationService:
         """Уведомление о восстановлении после ошибок"""
         message = (
             f"✅ <b>ВОССТАНОВЛЕНИЕ</b>\n\n"
-            f"📊 {service_name}\n"
+            f"📊 {html.escape(service_name)}\n"
             f"✅ Работа восстановлена после ошибок\n\n"
             f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
@@ -163,18 +167,21 @@ class NotificationService:
     ) -> str:
         """Форматирует критическое сообщение"""
 
+        # Экранируем детали, чтобы избежать ошибок парсинга HTML
+        details = html.escape(details)
+
         # Ограничиваем длину details
         if len(details) > 500:
             details = details[:497] + "..."
 
         message = (
             f"🚨 <b>КРИТИЧЕСКАЯ ОШИБКА</b>\n\n"
-            f"📊 <b>Компонент:</b> {error_type}\n"
+            f"📊 <b>Компонент:</b> {html.escape(error_type)}\n"
             f"❌ <b>Ошибка:</b>\n<code>{details}</code>\n"
         )
 
         if additional_info:
-            message += f"\nℹ️ <b>Доп. информация:</b>\n{additional_info}\n"
+            message += f"\nℹ️ <b>Доп. информация:</b>\n{html.escape(additional_info)}\n"
 
         message += f"\n⏰ <b>Время:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
 

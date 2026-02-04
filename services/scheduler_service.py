@@ -8,6 +8,7 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
+from config.settings import settings
 
 from utils.logger import logger
 from utils.notifications import notification_service
@@ -200,14 +201,28 @@ class SchedulerService:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+
+            # Создаём локальный экземпляр Bot в контексте этого event loop,
+            # чтобы не использовать Bot, привязанный к другому loop (это вызывало ошибки)
+            local_bot = Bot(token=settings.BOT_TOKEN)
+
             loop.run_until_complete(
                 notification_service.notify_critical_error(
-                    bot=self._bot,
+                    bot=local_bot,
                     error_type=error_type,
                     details=error_msg,
                     additional_info=additional_info,
                 )
             )
+
+            # Попробуем корректно закрыть сессии клиента, если они есть
+            try:
+                session = getattr(local_bot, "session", None)
+                if session is not None:
+                    loop.run_until_complete(session.aclose())
+            except Exception:
+                pass
+
             loop.close()
         except Exception as e:
             logger.error(f"❌ Не удалось отправить уведомление: {e}")
@@ -217,11 +232,22 @@ class SchedulerService:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+
+            local_bot = Bot(token=settings.BOT_TOKEN)
+
             loop.run_until_complete(
                 notification_service.notify_recovery(
-                    bot=self._bot, service_name=service_name
+                    bot=local_bot, service_name=service_name
                 )
             )
+
+            try:
+                session = getattr(local_bot, "session", None)
+                if session is not None:
+                    loop.run_until_complete(session.aclose())
+            except Exception:
+                pass
+
             loop.close()
         except Exception as e:
             logger.error(f"❌ Не удалось отправить уведомление о восстановлении: {e}")

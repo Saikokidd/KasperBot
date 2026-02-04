@@ -132,7 +132,10 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.debug(f"🔧 Support callback от user_id={support_user_id}: {query.data}")
 
-    await query.answer()
+    try:
+        await query.answer()
+    except telegram_error.TelegramError as e:
+        logger.warning(f"⚠️ Не удалось ответить на callback: {e}")
 
     try:
         data = query.data.split("_")
@@ -229,15 +232,22 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
 
         # Получаем оригинальный текст и добавляем статус
-        original_text = query.message.text_html or query.message.text
+        import html
+
+        # Берём plain text (если есть) и экранируем для безопасного встраивания в HTML
+        original_text = query.message.text or query.message.text_html or ""
 
         if len(original_text) > 3500:
             original_text = original_text[:3500] + "..."
 
+        original_text_safe = html.escape(original_text)
+        action_text_safe = html.escape(action_text)
+        support_username_safe = html.escape(support_username)
+
         new_message = (
-            f"{original_text}\n"
-            f"{action_text}\n"
-            f"<b>Обработал:</b> {support_username}"
+            f"{original_text_safe}\n"
+            f"{action_text_safe}\n"
+            f"<b>Обработал:</b> {support_username_safe}"
         )
 
         # Редактируем сообщение
