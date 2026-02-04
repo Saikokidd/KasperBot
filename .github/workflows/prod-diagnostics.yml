@@ -1,0 +1,61 @@
+name: Prod diagnostics (temporary)
+
+on:
+  push:
+    branches: [ ci/prod-check ]
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check VPS secrets
+      id: check_secrets
+      run: |
+        if [ -z "${{ secrets.VPS_HOST }}" ] || [ -z "${{ secrets.VPS_USER }}" ] || [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "VPS secrets missing; skipping diagnostics."
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Notify skip
+      if: steps.check_secrets.outputs.skip == 'true'
+      run: |
+        echo "VPS secrets missing - cannot run diagnostics"
+
+    - name: Write SSH key
+      if: steps.check_secrets.outputs.skip == 'false'
+      run: |
+        echo "Writing SSH key"
+        mkdir -p ~/.ssh
+        echo "${{ secrets.VPS_SSH_KEY }}" > ./vps_key
+        chmod 600 ./vps_key
+
+    - name: Run diagnostics on VPS
+      if: steps.check_secrets.outputs.skip == 'false'
+      run: |
+        echo "Running diagnostics on ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}"
+        ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i ./vps_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'EOS' > remote_diag.log 2>&1 || true
+        echo "--- GIT COMMIT ON SERVER ---"
+        cd /root/projects/error_bot || true
+        git rev-parse --short HEAD || echo "N/A"
+        echo "--- SERVICE STATUS ---"
+        systemctl status error_bot --no-pager || true
+        echo "--- IS-ACTIVE ---"
+        systemctl is-active --quiet error_bot && echo "active" || echo "inactive"
+        echo "--- JOURNAL (last 200 lines) ---"
+        journalctl -u error_bot -n 200 --no-pager || true
+        EOS
+        echo "Diagnostics saved to remote_diag.log"
+        tail -n 200 remote_diag.log || true
+
+    - name: Upload diagnostics
+      if: steps.check_secrets.outputs.skip == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: prod-diagnostics
+        path: remote_diag.log
+
+    - name: Done
+      run: echo "Diagnostics workflow finished. Download artifact 'prod-diagnostics' to inspect output."
