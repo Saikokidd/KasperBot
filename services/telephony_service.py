@@ -108,6 +108,10 @@ class TelephonyService:
                     reply_to_message_id=sent_msg.message_id,
                 )
                 logger.info("📎 Отправлен документ к ошибке")
+            
+            # ✅ ФИКС: явный return True после успешной отправки
+            logger.info(f"✅ Ошибка успешно отправлена в группу {group_id}")
+            return True
 
         except telegram_error.TelegramError as e:
             logger.error(
