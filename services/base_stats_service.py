@@ -131,9 +131,9 @@ class BaseStatsService:
                 f"┌──────────────────────────┐\n"
                 f"│ {provider:<24} │\n"
                 f"├──────────────────────────┤\n"
-                f"│ Трубок:    {calls:<15}│\n"
-                f"│ Бомжи:     {bomzh:<15}│\n"
-                f"│ Перезвоны: {recalls:<6} ({pct:.1f}%)  │\n"
+                f"│ Трубок:   {calls:<15}│\n"
+                f"│ Бомжи:    {bomzh:<15}│\n"
+                f"│ Перезв: {recalls:<6} ({pct:.1f}%)  │\n"
                 f"└──────────────────────────┘"
             )
             lines.append(f"\n<code>{block}</code>")
@@ -143,9 +143,9 @@ class BaseStatsService:
             f"┌──────────────────────────┐\n"
             f"│ {'ИТОГО':<24} │\n"
             f"├──────────────────────────┤\n"
-            f"│ Трубок:    {total_calls:<15}│\n"
-            f"│ Бомжи:     {total_bomzh:<15}│\n"
-            f"│ Перезвоны: {total_recalls:<6} ({total_pct:.1f}%)  │\n"
+            f"│ Трубок:   {total_calls:<15}│\n"
+            f"│ Бомжи:    {total_bomzh:<15}│\n"
+            f"│ Перезв: {total_recalls:<6} ({total_pct:.1f}%)  │\n"
             f"└──────────────────────────┘"
         )
         lines.append(f"\n<code>{block}</code>")
