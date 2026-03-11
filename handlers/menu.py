@@ -1,12 +1,6 @@
 """
-handlers/menu.py - ПОЛНОЕ ИСПРАВЛЕНИЕ
-Правильная работа с Inline кнопками телефоний + проверка быстрых ошибок
-
-КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
-✅ НЕ используем Reply клавиатуру для телефоний (только Inline)
-✅ Всегда очищаем состояние при возврате в меню
-✅ Не показываем лишних предупреждений
-✅ ДОБАВЛЕНО: Проверка быстрых ошибок через БД
+handlers/menu.py
+✅ ИЗМЕНЕНИЕ: добавлен обработчик кнопки "Статистика баз"
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -32,76 +26,55 @@ async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_telephony_errors_button(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """
-    Обработчик кнопки "Ошибки телефонии"
-
-    ✅ КРИТИЧНО: Очищаем старое состояние перед показом кнопок
-    """
-    # ✅ КРИТИЧНО: Очищаем состояние
+    """Обработчик кнопки "Ошибки телефонии" """
     clear_all_states(context)
 
-    # Получаем все телефонии из БД
     from database.models import db
 
     telephonies = db.get_all_telephonies()
 
     if not telephonies:
         await update.message.reply_text(
-            "⚠️ Нет доступных телефоний.\n" "Обратитесь к администратору."
+            "⚠️ Нет доступных телефоний.\nОбратитесь к администратору."
         )
         return
 
-    # Создаём Inline кнопки
-    buttons = []
-    for tel in telephonies:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    tel["name"], callback_data=f"select_tel_{tel['code']}"
-                )
-            ]
-        )
+    buttons = [
+        [InlineKeyboardButton(tel["name"], callback_data=f"select_tel_{tel['code']}")]
+        for tel in telephonies
+    ]
 
-    keyboard = InlineKeyboardMarkup(buttons)
-
-    await update.message.reply_text(MESSAGES["choose_telephony"], reply_markup=keyboard)
+    await update.message.reply_text(
+        MESSAGES["choose_telephony"],
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 async def handle_telephony_selection_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """
-    Обработчик Inline кнопок выбора телефонии
-
-    ✅ КРИТИЧНО: Проверяет быстрая ли телефония через БД
-    """
+    """Обработчик Inline кнопок выбора телефонии"""
     query = update.callback_query
     await query.answer()
 
-    # Извлекаем код телефонии
     tel_code = query.data.split("_")[2]
-
     logger.info(f"📞 Выбрана телефония через Inline: {tel_code}")
 
-    # Получаем данные телефонии из БД
     from database.models import db
 
     tel = db.get_telephony_by_code(tel_code)
 
     if not tel:
-        await query.message.edit_text("⚠️ Телефония не найдена.\n" "Попробуйте снова.")
+        await query.message.edit_text("⚠️ Телефония не найдена.\nПопробуйте снова.")
         return
 
-    # ✅ КРИТИЧЕСКАЯ ПРОВЕРКА: Быстрая ли телефония?
     is_quick = db.is_quick_error_telephony(tel_code)
 
     if is_quick:
-        # ===== БЫСТРЫЕ ОШИБКИ =====
         logger.info(f"⚡️ Телефония {tel_code} использует быстрые ошибки")
 
         user_id = query.from_user.id
 
-        # Проверяем SIP
         if db.is_sip_valid_today(user_id):
             sip_data = db.get_manager_sip(user_id)
 
@@ -109,45 +82,36 @@ async def handle_telephony_selection_callback(
                 sip = sip_data["sip_number"]
                 logger.info(f"✅ SIP уже указан: {sip}")
 
-                # Сохраняем контекст
                 context.user_data["quick_error_sip"] = sip
                 context.user_data["quick_error_tel_name"] = tel["name"]
                 context.user_data["quick_error_tel_code"] = tel_code
                 context.user_data["quick_error_group_id"] = tel["group_id"]
 
-                # Показываем кнопки ошибок
                 await query.message.edit_text(
                     MESSAGES["choose_quick_error"].format(sip=sip),
                     reply_markup=get_quick_errors_keyboard(),
                 )
                 return
 
-        # SIP не указан - запрашиваем
         logger.info("⚠️ SIP не указан, запрашиваем")
 
-        # Сохраняем контекст
         context.user_data["quick_error_tel_name"] = tel["name"]
         context.user_data["quick_error_tel_code"] = tel_code
         context.user_data["quick_error_group_id"] = tel["group_id"]
         context.user_data["awaiting_sip_for_quick_error"] = True
 
         await query.message.edit_text(MESSAGES["sip_prompt"])
-
-        # Здесь должен подхватить message_handler для обработки SIP
         return
 
     else:
-        # ===== ОБЫЧНЫЙ FLOW =====
         logger.info(f"📝 Телефония {tel_code} использует обычный ввод")
 
-        # Сохраняем выбор
         set_tel_choice(context, tel["name"], tel_code)
 
         logger.info(
             f"✅ User {query.from_user.id} выбрал телефонию: {tel['name']} ({tel_code})"
         )
 
-        # Уведомляем пользователя
         await query.message.edit_text(
             f"✅ Вы выбрали: <b>{tel['name']}</b>\n\n"
             f"📝 Теперь отправьте описание ошибки\n"
@@ -159,7 +123,7 @@ async def handle_telephony_selection_callback(
 async def handle_useful_links_button(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """Обработчик кнопки "Полезные ссылки"""
+    """Обработчик кнопки "Полезные ссылки" """
     links_text = "🔗 <b>Полезные ссылки:</b>\n\n"
     for i, (name, url) in enumerate(USEFUL_LINKS.items(), 1):
         links_text += f"{i}. <a href='{url}'>{name}</a>\n"
@@ -168,7 +132,7 @@ async def handle_useful_links_button(
 
 
 async def handle_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки "Статистика трубок"""
+    """Обработчик кнопки "Статистика трубок" """
     try:
         from services.stats_service import stats_service
 
@@ -187,7 +151,7 @@ async def handle_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_managers_stats_button(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """Обработчик кнопки "Статистика менеджеров"""
+    """Обработчик кнопки "Статистика менеджеров" """
     try:
         from services.managers_stats_service import managers_stats_service
 
@@ -197,18 +161,48 @@ async def handle_managers_stats_button(
     except Exception as e:
         logger.error(f"❌ Ошибка получения статистики менеджеров: {e}", exc_info=True)
         await update.message.reply_text(
-            "⚠️ Ошибка при получении статистики менеджеров.\n" "Попробуйте позже."
+            "⚠️ Ошибка при получении статистики менеджеров.\nПопробуйте позже."
         )
+
+
+# ✅ НОВЫЙ ОБРАБОТЧИК: Статистика баз
+async def handle_base_stats_button(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Обработчик кнопки "Статистика баз" — данные по поставщикам за сегодня"""
+    from services.base_stats_service import base_stats_service
+
+    loading_msg = None
+    try:
+        loading_msg = await update.message.reply_text("⏳ Загружаю данные...")
+        stats_text = await base_stats_service.get_today_stats_text()
+
+        if loading_msg:
+            await loading_msg.edit_text(stats_text, parse_mode="HTML")
+        else:
+            await update.message.reply_text(stats_text, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения статистики баз: {e}", exc_info=True)
+        # Если loading_msg уже отправлен — редактируем его, иначе отправляем новое
+        error_text = "⚠️ Ошибка при получении статистики баз.\nПопробуйте позже."
+        try:
+            if loading_msg:
+                await loading_msg.edit_text(error_text)
+            else:
+                await update.message.reply_text(error_text)
+        except Exception:
+            await update.message.reply_text(error_text)
 
 
 async def handle_bot_management_button(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """Обработчик кнопки "Управление ботом"""
+    """Обработчик кнопки "Управление ботом" """
     keyboard = get_management_menu()
 
     await update.message.reply_text(
-        "⚙️ <b>Управление ботом</b>\n\n" "Выберите раздел:",
+        "⚙️ <b>Управление ботом</b>\n\nВыберите раздел:",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
@@ -232,44 +226,35 @@ async def handle_errors_stats_button(
 async def handle_back_to_menu_button(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """
-    Обработчик кнопки "◀️ Меню" - возврат в главное меню
-
-    ✅ КРИТИЧНО: Очищаем ВСЁ состояние при возврате
-    """
-    # ✅ КРИТИЧНО: Полная очистка состояния
+    """Обработчик кнопки "◀️ Меню" — возврат в главное меню"""
     clear_all_states(context)
 
     role = get_user_role(context)
     current_menu = get_menu_by_role(role)
 
-    # ✅ ИСПРАВЛЕНО: Обновляем Reply клавиатуру
     await update.message.reply_text(
         "📋 Главное меню\n\nВыберите действие:", reply_markup=current_menu
     )
 
 
 async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Главный обработчик кнопок меню
-    """
+    """Главный обработчик кнопок меню"""
     text = update.message.text
     role = get_user_role(context)
     user_id = update.effective_user.id
 
     logger.debug(f"Кнопка '{text}' от user_id={user_id}, роль={role}")
 
-    # Если роль не установлена
     if not role:
         await update.message.reply_text(MESSAGES["session_expired"])
         return
 
-    # Маппинг кнопок на функции
     menu_actions = {
         "Ошибки телефонии": handle_telephony_errors_button,
         "Полезные ссылки": handle_useful_links_button,
         "Статистика трубок": handle_stats_button,
         "Статистика менеджеров": handle_managers_stats_button,
+        "Статистика баз": handle_base_stats_button,          # ✅ новая кнопка
         "Управление ботом": handle_bot_management_button,
         "Статистика ошибок": handle_errors_stats_button,
         "◀️ Меню": handle_back_to_menu_button,

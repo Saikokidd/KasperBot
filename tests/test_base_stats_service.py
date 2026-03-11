@@ -1,236 +1,210 @@
 """
 tests/test_base_stats_service.py
-Unit тесты для сервиса base_stats_service
-
+Unit тесты для сервиса base_stats_service (новая версия)
 Запуск: pytest tests/test_base_stats_service.py -v
 """
-
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime
+import pytz
 
 
-@pytest.fixture
-def mock_context():
-    """Mock telegram context"""
-    context = MagicMock()
-    context.user_data = {}
-    context.bot_data = {}
-    return context
+# ===================================================================
+# Тесты _calculate_stats
+# ===================================================================
 
+class TestCalculateStats:
+    """Тесты подсчёта статистики по поставщикам"""
 
-class TestBaseStatsCalculations:
-    """Тесты логики подсчёта метрик"""
-
-    def test_count_calls_basic(self):
-        """Тест базового подсчёта трубок"""
+    def _calc(self, raw):
         from services.base_stats_service import BaseStatsService
+        return BaseStatsService._calculate_stats(raw)
 
-        # Создаём mock сервиса
-        service = BaseStatsService()
-        service.client = MagicMock()
-        service.spreadsheet = MagicMock()
-
-        # Тестовые данные
-        raw_data = [
-            {"поставщик": "3к_МСК", "итог_цвет": "ЗЕЛЕНЫЙ"},
-            {"поставщик": "3к_МСК", "итог_цвет": "ЗЕЛЕНЫЙ"},
-            {"поставщик": "3к_МСК", "итог_цвет": "РОЗОВЫЙ"},
-            {"поставщик": "1к_Анон", "итог_цвет": "ЗЕЛЕНЫЙ"},
-        ]
-
-        # Имитируем вызов метода
-        result = service.calculate_provider_stats(raw_data)
-
-        # Проверяем результаты
-        assert result["3к_МСК"]["calls"] == 3
-        assert result["3к_МСК"]["recalls"] == 2
-        assert result["3к_МСК"]["bomzh"] == 1
-
-        assert result["1к_Анон"]["calls"] == 1
-        assert result["1к_Анон"]["recalls"] == 1
-        assert result["1к_Анон"]["bomzh"] == 0
-
-    def test_count_empty_data(self):
-        """Тест с пустыми данными"""
-        from services.base_stats_service import BaseStatsService
-
-        service = BaseStatsService()
-        service.client = MagicMock()
-        service.spreadsheet = MagicMock()
-
-        result = service.calculate_provider_stats([])
+    def test_empty_data(self):
+        result = self._calc([])
         assert result == {}
 
-    def test_count_unknown_color(self):
-        """Тест с неизвестным цветом (не считается ни как бомж, ни как перезвон)"""
-        from services.base_stats_service import BaseStatsService
+    def test_single_provider_yellow(self):
+        raw = [{"поставщик": "Поставщик А", "цвет": "ЖЕЛТЫЙ"}]
+        result = self._calc(raw)
+        assert result["Поставщик А"]["calls"] == 1
+        assert result["Поставщик А"]["bomzh"] == 0
+        assert result["Поставщик А"]["recalls"] == 0
 
-        service = BaseStatsService()
-        service.client = MagicMock()
-        service.spreadsheet = MagicMock()
+    def test_single_provider_green(self):
+        raw = [{"поставщик": "Поставщик А", "цвет": "ЗЕЛЕНЫЙ"}]
+        result = self._calc(raw)
+        assert result["Поставщик А"]["recalls"] == 1
+        assert result["Поставщик А"]["bomzh"] == 0
 
-        raw_data = [
-            {"поставщик": "3к_МСК", "итог_цвет": ""},  # Пусто
-            {"поставщик": "3к_МСК", "итог_цвет": "КРАСНЫЙ"},  # Неизвестный цвет
+    def test_single_provider_pink(self):
+        raw = [{"поставщик": "Поставщик А", "цвет": "РОЗОВЫЙ"}]
+        result = self._calc(raw)
+        assert result["Поставщик А"]["bomzh"] == 1
+        assert result["Поставщик А"]["recalls"] == 0
+
+    def test_multiple_providers(self):
+        raw = [
+            {"поставщик": "А", "цвет": "ЗЕЛЕНЫЙ"},
+            {"поставщик": "А", "цвет": "ЖЕЛТЫЙ"},
+            {"поставщик": "А", "цвет": "РОЗОВЫЙ"},
+            {"поставщик": "Б", "цвет": "ЗЕЛЕНЫЙ"},
+            {"поставщик": "Б", "цвет": "ЗЕЛЕНЫЙ"},
         ]
+        result = self._calc(raw)
 
-        result = service.calculate_provider_stats(raw_data)
+        assert result["А"]["calls"] == 3
+        assert result["А"]["recalls"] == 1
+        assert result["А"]["bomzh"] == 1
 
-        assert result["3к_МСК"]["calls"] == 2
-        assert result["3к_МСК"]["recalls"] == 0
-        assert result["3к_МСК"]["bomzh"] == 0
+        assert result["Б"]["calls"] == 2
+        assert result["Б"]["recalls"] == 2
+        assert result["Б"]["bomzh"] == 0
+
+    def test_skips_empty_provider(self):
+        raw = [
+            {"поставщик": "", "цвет": "ЗЕЛЕНЫЙ"},
+            {"поставщик": "   ", "цвет": "ЖЕЛТЫЙ"},
+            {"поставщик": "Нормальный", "цвет": "ЖЕЛТЫЙ"},
+        ]
+        result = self._calc(raw)
+        assert len(result) == 1
+        assert "Нормальный" in result
+
+    def test_missing_provider_key(self):
+        raw = [{"цвет": "ЗЕЛЕНЫЙ"}, {"поставщик": "А", "цвет": "ЖЕЛТЫЙ"}]
+        result = self._calc(raw)
+        assert len(result) == 1
+        assert "А" in result
+
+    def test_missing_color_key(self):
+        """Нет ключа 'цвет' — не должно падать"""
+        raw = [{"поставщик": "А"}]
+        result = self._calc(raw)
+        assert result["А"]["calls"] == 1
+        assert result["А"]["bomzh"] == 0
+        assert result["А"]["recalls"] == 0
+
+    def test_case_insensitive_color(self):
+        """Цвет в нижнем регистре — не должен засчитываться как ЗЕЛЕНЫЙ/РОЗОВЫЙ"""
+        raw = [
+            {"поставщик": "А", "цвет": "зеленый"},   # не верхний регистр
+            {"поставщик": "А", "цвет": "ЗЕЛЕНЫЙ"},   # верхний — засчитывается
+        ]
+        result = self._calc(raw)
+        # Только одна зелёная (верхний регистр)
+        assert result["А"]["recalls"] == 1
+        assert result["А"]["calls"] == 2
 
 
-class TestPercentageCalculations:
-    """Тесты расчёта процентов"""
+# ===================================================================
+# Тесты _format_message
+# ===================================================================
 
-    @pytest.mark.parametrize(
-        "calls,recalls,expected_pct",
-        [
-            (10, 5, 50),
-            (100, 25, 25),
-            (7, 3, 42),
-            (1, 0, 0),
-            (0, 0, 0),
-        ],
-    )
-    def test_recall_percentage(self, calls, recalls, expected_pct):
-        """Тест расчёта процента перезвонов"""
-        pct = (recalls / calls * 100) if calls > 0 else 0
-        assert int(pct) == expected_pct
+class TestFormatMessage:
+    """Тесты форматирования текстового сообщения"""
 
-    def test_total_percentage(self):
-        """Тест расчёта итогового процента"""
+    def _fmt(self, stats, date_str="11.03"):
+        from services.base_stats_service import BaseStatsService
+        return BaseStatsService._format_message(stats, date_str)
+
+    def test_empty_stats(self):
+        msg = self._fmt({})
+        assert "пока нет" in msg
+        assert "11.03" in msg
+
+    def test_contains_provider_name(self):
+        stats = {"Поставщик А": {"calls": 10, "bomzh": 2, "recalls": 3}}
+        msg = self._fmt(stats)
+        assert "Поставщик А" in msg
+
+    def test_contains_numbers(self):
+        stats = {"А": {"calls": 5, "bomzh": 1, "recalls": 2}}
+        msg = self._fmt(stats)
+        assert "5" in msg
+        assert "1" in msg
+        assert "2" in msg
+
+    def test_percent_calculation(self):
+        stats = {"А": {"calls": 10, "bomzh": 0, "recalls": 5}}
+        msg = self._fmt(stats)
+        assert "50.0%" in msg
+
+    def test_total_line_present(self):
         stats = {
-            "provider1": {"calls": 10, "recalls": 4, "bomzh": 1},
-            "provider2": {"calls": 15, "recalls": 6, "bomzh": 2},
+            "А": {"calls": 3, "bomzh": 0, "recalls": 1},
+            "Б": {"calls": 7, "bomzh": 2, "recalls": 3},
         }
+        msg = self._fmt(stats)
+        assert "ИТОГО" in msg
+        # Итого звонков = 10
+        assert "10" in msg
 
-        total_calls = sum(s["calls"] for s in stats.values())
-        total_recalls = sum(s["recalls"] for s in stats.values())
+    def test_zero_calls_no_division_error(self):
+        """calls=0 не должно вызывать ZeroDivisionError"""
+        stats = {"А": {"calls": 0, "bomzh": 0, "recalls": 0}}
+        msg = self._fmt(stats)
+        assert "0.0%" in msg
 
-        pct = (total_recalls / total_calls * 100) if total_calls > 0 else 0
+    def test_html_tags_present(self):
+        stats = {"А": {"calls": 1, "bomzh": 0, "recalls": 0}}
+        msg = self._fmt(stats)
+        assert "<b>" in msg
 
-        assert total_calls == 25
-        assert total_recalls == 10
-        assert int(pct) == 40
 
+# ===================================================================
+# Тесты get_today_stats_text (интеграционный, с мокингом)
+# ===================================================================
 
-class TestWeekRangeCalculations:
-    """Тесты расчёта недельного диапазона"""
+class TestGetTodayStatsText:
+    """Интеграционные тесты публичного метода"""
 
-    def test_week_range_monday(self):
-        """Тест диапазона для понедельника"""
+    @pytest.mark.asyncio
+    async def test_returns_text_on_success(self):
         from services.base_stats_service import BaseStatsService
 
-        service = BaseStatsService()
+        service = BaseStatsService.__new__(BaseStatsService)
+        service.timezone = pytz.timezone("Europe/Kiev")
+        service.url = "http://fake-url"
 
-        # Понедельник
-        monday = datetime(2025, 12, 15)  # Понедельник
-        start, end = service.get_week_range(monday)
-
-        assert start.weekday() == 0  # Понедельник
-        assert end.weekday() == 5  # Суббота
-        assert (end - start).days == 5
-
-    def test_week_range_friday(self):
-        """Тест диапазона для пятницы"""
-        from services.base_stats_service import BaseStatsService
-
-        service = BaseStatsService()
-
-        # Пятница
-        friday = datetime(2025, 12, 19)
-        start, end = service.get_week_range(friday)
-
-        assert start.weekday() == 0  # Понедельник текущей недели
-        assert end.weekday() == 5  # Суббота
-
-    def test_week_range_sunday(self):
-        """Тест диапазона для воскресенья - переходит на следующий понедельник"""
-        from services.base_stats_service import BaseStatsService
-
-        service = BaseStatsService()
-
-        # Воскресенье
-        sunday = datetime(2025, 12, 21)
-        start, end = service.get_week_range(sunday)
-
-        assert start.weekday() == 0  # Понедельник
-        assert end.weekday() == 5  # Суббота
-
-
-class TestDataGrouping:
-    """Тесты группировки данных по датам и поставщикам"""
-
-    def test_data_grouped_by_provider(self):
-        """Тест группировки данных по поставщикам"""
-        raw_data = [
-            {"поставщик": "A", "итог_цвет": "ЗЕЛЕНЫЙ"},
-            {"поставщик": "B", "итог_цвет": "РОЗОВЫЙ"},
-            {"поставщик": "A", "итог_цвет": "ЗЕЛЕНЫЙ"},
-            {"поставщик": "A", "итог_цвет": ""},
+        raw = [
+            {"поставщик": "Тест", "цвет": "ЗЕЛЕНЫЙ"},
+            {"поставщик": "Тест", "цвет": "ЖЕЛТЫЙ"},
         ]
 
+        with patch.object(service, "_fetch_providers_raw", new=AsyncMock(return_value=raw)):
+            result = await service.get_today_stats_text()
+
+        assert "Тест" in result
+        assert "Трубок" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_error_text_on_exception(self):
         from services.base_stats_service import BaseStatsService
 
-        service = BaseStatsService()
-        service.client = MagicMock()
-        service.spreadsheet = MagicMock()
+        service = BaseStatsService.__new__(BaseStatsService)
+        service.timezone = pytz.timezone("Europe/Kiev")
+        service.url = "http://fake-url"
 
-        result = service.calculate_provider_stats(raw_data)
+        with patch.object(
+            service,
+            "_fetch_providers_raw",
+            new=AsyncMock(side_effect=Exception("Network error")),
+        ):
+            result = await service.get_today_stats_text()
 
-        assert len(result) == 2
-        assert "A" in result
-        assert "B" in result
+        assert "⚠️" in result
+        assert "ошибка" in result.lower() or "удалось" in result.lower()
 
-
-@pytest.mark.asyncio
-class TestAsyncOperations:
-    """Тесты асинхронных операций"""
-
-    async def test_fetch_data_called(self):
-        """Тест вызова fetch при подсчёте"""
+    @pytest.mark.asyncio
+    async def test_empty_data_returns_no_data_message(self):
         from services.base_stats_service import BaseStatsService
 
-        service = BaseStatsService()
-        service.client = MagicMock()
-        service.spreadsheet = MagicMock()
+        service = BaseStatsService.__new__(BaseStatsService)
+        service.timezone = pytz.timezone("Europe/Kiev")
+        service.url = "http://fake-url"
 
-        # Mock для fetch метода
-        service.fetch_provider_data = AsyncMock(
-            return_value=[{"поставщик": "3к_МСК", "итог_цвет": "ЗЕЛЕНЫЙ"}]
-        )
+        with patch.object(service, "_fetch_providers_raw", new=AsyncMock(return_value=[])):
+            result = await service.get_today_stats_text()
 
-        result = await service.count_calls_by_provider("15.12")
-
-        # Проверяем что метод был вызван
-        service.fetch_provider_data.assert_called_once_with("15.12")
-        assert "3к_МСК" in result
-
-
-class TestDesignColors:
-    """Тесты цветовой схемы"""
-
-    def test_color_values(self):
-        """Тест значений цветов в RGB"""
-        colors = {
-            "orange_date": {"red": 1, "green": 0.65, "blue": 0.3},
-            "purple_provider": {"red": 0.9, "green": 0.8, "blue": 1.0},
-            "yellow_calls": {"red": 1, "green": 1, "blue": 0.4},
-            "pink_bomzh": {"red": 1, "green": 0.75, "blue": 0.8},
-            "green_recalls": {"red": 0.7, "green": 0.95, "blue": 0.7},
-            "blue_total": {"red": 0.5, "green": 0.8, "blue": 1.0},
-        }
-
-        # Проверяем что все цвета в диапазоне 0-1
-        for color_name, rgb in colors.items():
-            for channel, value in rgb.items():
-                assert (
-                    0 <= value <= 1
-                ), f"{color_name}.{channel} = {value} не в диапазоне [0, 1]"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        assert "пока нет" in result

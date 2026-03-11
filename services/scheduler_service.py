@@ -1,6 +1,7 @@
 """
-ФИНАЛЬНАЯ ВЕРСИЯ: services/scheduler_service.py
-С уведомлениями админу при критических ошибках + статистика баз
+services/scheduler_service.py
+С уведомлениями админу при критических ошибках
+✅ ИЗМЕНЕНИЕ: убрана задача обновления статистики баз (теперь только по запросу через кнопку)
 """
 import asyncio
 from datetime import datetime
@@ -115,31 +116,6 @@ class SchedulerService:
                     f"⚠️ КРИТИЧНО: {self._consecutive_errors} ошибок обновления подряд!"
                 )
 
-    def _update_base_stats_job(self):
-        """
-        ✅ НОВАЯ ЗАДАЧА: Обновление статистики баз
-        """
-        try:
-            from services.base_stats_service import base_stats_service
-
-            now = datetime.now(self.timezone)
-            logger.info(f"⏰ Запуск обновления статистики баз ({now.strftime('%H:%M')})")
-
-            if not base_stats_service.client or not base_stats_service.spreadsheet:
-                logger.error("❌ BaseStatsService не инициализирован!")
-                logger.error("   Проверьте BASE_STATS_SHEET_ID в .env")
-                return
-
-            self._run_async_task(base_stats_service.update_stats())
-
-            logger.info("✅ Обновление статистики баз завершено")
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка обновления статистики баз: {e}")
-
-            if self._bot:
-                self._send_critical_notification("Статистика баз", str(e))
-
     def _create_weekly_sheet_job(self):
         """Задача создания нового листа"""
         try:
@@ -202,8 +178,6 @@ class SchedulerService:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            # Создаём локальный экземпляр Bot в контексте этого event loop,
-            # чтобы не использовать Bot, привязанный к другому loop (это вызывало ошибки)
             local_bot = Bot(token=settings.BOT_TOKEN)
 
             loop.run_until_complete(
@@ -215,7 +189,6 @@ class SchedulerService:
                 )
             )
 
-            # Попробуем корректно закрыть сессии клиента, если они есть
             try:
                 session = getattr(local_bot, "session", None)
                 if session is not None:
@@ -271,19 +244,7 @@ class SchedulerService:
                 max_instances=1,
             )
 
-            # ===== ЗАДАЧА 2: Обновление статистики баз ✅ НОВОЕ =====
-            self.scheduler.add_job(
-                func=self._update_base_stats_job,
-                trigger=CronTrigger(
-                    day_of_week="mon-sat", hour="8-19", minute=0, timezone=self.timezone
-                ),
-                id="update_base_stats",
-                name="Обновление статистики баз",
-                replace_existing=True,
-                max_instances=1,
-            )
-
-            # ===== ЗАДАЧА 3: Создание нового листа =====
+            # ===== ЗАДАЧА 2: Создание нового листа =====
             self.scheduler.add_job(
                 func=self._create_weekly_sheet_job,
                 trigger=CronTrigger(
@@ -295,7 +256,7 @@ class SchedulerService:
                 max_instances=1,
             )
 
-            # ===== ЗАДАЧА 4: Сброс SIP =====
+            # ===== ЗАДАЧА 3: Сброс SIP =====
             self.scheduler.add_job(
                 func=self._reset_sips_job,
                 trigger=CronTrigger(
@@ -310,9 +271,9 @@ class SchedulerService:
             self._jobs_added = True
             logger.info("✅ Все задачи добавлены в планировщик")
             logger.info("   • Статистика менеджеров: каждый час (8:00-19:00, ПН-СБ)")
-            logger.info("   • Статистика баз: каждый час (8:00-19:00, ПН-СБ)")
             logger.info("   • Создание листа: понедельник 00:01")
             logger.info("   • Сброс SIP: 8:00 (ПН-СБ)")
+            logger.info("   ℹ️ Статистика баз: только по запросу через кнопку в боте")
 
             self._print_jobs_info()
 
@@ -344,7 +305,6 @@ class SchedulerService:
                 self.scheduler.start()
                 logger.info("🚀 Планировщик задач запущен")
                 logger.info("📊 Статистика менеджеров: каждый час (8:00-19:00, ПН-СБ)")
-                logger.info("📊 Статистика баз: каждый час (8:00-19:00, ПН-СБ)")
                 logger.info("📋 Новый лист: каждый понедельник в 00:01")
                 logger.info("🔄 SIP: сброс каждое утро в 8:00 (ПН-СБ)")
                 logger.info("📨 Критические ошибки → админам")
@@ -376,13 +336,6 @@ class SchedulerService:
         """Запустить обновление статистики прямо сейчас (для тестирования)"""
         logger.info("🔄 Ручной запуск обновления статистики")
         self._update_stats_job()
-
-    def run_base_stats_now(self):
-        """
-        ✅ НОВОЕ: Запустить обновление статистики баз прямо сейчас
-        """
-        logger.info("🔄 Ручной запуск обновления статистики баз")
-        self._update_base_stats_job()
 
     def get_stats(self) -> dict:
         """Получить статистику работы планировщика"""

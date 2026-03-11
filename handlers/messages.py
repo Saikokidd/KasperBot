@@ -6,6 +6,7 @@ handlers/messages.py - ПОЛНОЕ ИСПРАВЛЕНИЕ
 ✅ НЕ показывает предупреждение о телефонии если пользователь просто пишет текст
 ✅ Предупреждение только ПОСЛЕ нажатия кнопки "Ошибки телефонии"
 ✅ Используем флаг "awaiting_error" для определения намерения пользователя
+✅ Добавлена "Статистика баз" в menu_texts
 """
 from telegram import Update, error as telegram_error
 from telegram.ext import ContextTypes
@@ -90,10 +91,7 @@ async def handle_error_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ✅ КРИТИЧНО: Если телефония НЕ выбрана - НЕ обрабатываем как ошибку
     if not tel or not tel_code:
-        # Просто игнорируем - пусть message_handler обработает как обычный текст
         return False
-
-    # Телефония выбрана - обрабатываем как ошибку
 
     group_id = telephony_service.get_group_id(tel)
     if not group_id:
@@ -154,14 +152,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # ✅ ИСПРАВЛЕНО: Добавлены ключи быстрых ошибок
     management_keys = [
         "tel_name",
         "tel_code",
         "tel_type",
         "broadcast_message_id",
         "broadcast_chat_id",
-        # ✅ НОВОЕ: Ключи для ConversationHandler быстрых ошибок
         "awaiting_qe_code_add",
         "awaiting_qe_code_remove",
     ]
@@ -170,7 +166,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.debug("🔇 Игнорируем сообщение - ConversationHandler активен")
         return
 
-    # ✅ КРИТИЧНО: Игнорируем ТОЛЬКО чистые числа (ID) длиннее 5 символов
+    # Игнорируем чистые числа (ID) длиннее 5 символов
     text_clean = text.strip()
     if text_clean.isdigit() and len(text_clean) > 5:
         logger.debug(f"🔇 Игнорируем ID {text_clean} (обработан ConversationHandler)")
@@ -182,43 +178,41 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_support_message(update, context):
         return
 
-    # ✅ НОВОЕ: Проверка быстрых ошибок
+    # Проверка быстрых ошибок
     from handlers.quick_errors import (
         handle_sip_input_for_quick_error,
         handle_custom_error_input,
     )
 
-    # Проверка SIP для быстрых ошибок
     if await handle_sip_input_for_quick_error(update, context):
         return
 
-    # Проверка кастомной ошибки для быстрых ошибок
     if await handle_custom_error_input(update, context):
         return
 
-    # Список кнопок меню
+    # ✅ Список кнопок меню — "Статистика баз" добавлена
     menu_texts = {
         "Ошибки телефонии",
         "Полезные ссылки",
         "Статистика трубок",
         "Статистика менеджеров",
+        "Статистика баз",        # ✅ ДОБАВЛЕНО
         "Статистика ошибок",
         "Управление ботом",
         "◀️ Меню",
     }
 
-    # Если это кнопка меню
     if text in menu_texts:
         await handle_menu_button(update, context)
         return
 
-    # Пытаемся обработать как ошибку
+    # Пытаемся обработать как ошибку телефонии
     handled = await handle_error_message(update, context)
 
     if handled:
         return
 
-    # Если не обработано - показываем "Неизвестная команда"
+    # Если не обработано — показываем "Неизвестная команда"
     role = get_user_role(context)
     current_menu = get_menu_by_role(role)
 
